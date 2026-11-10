@@ -1,0 +1,1 @@
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "lib": ["ES2022","DOM","DOM.Iterable"], "types": ["vite/client"], "outDir": "../../.tsbuild/client", "rootDir": "src", "tsBuildInfoFile": "../../.tsbuild/client.tsbuildinfo" }, "include": ["src"], "references": [{ "path": "../shared" }] }
