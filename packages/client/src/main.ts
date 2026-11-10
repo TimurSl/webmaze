@@ -67,6 +67,7 @@ const ui = new UI(root, {
   leave: () => { net.leave(); autoStart = false; autoDiscovery = false; void toMenu(); },
   order: (item) => net.buy({ item }),
   again: () => { net.leave(); void toMenu(); },
+  press: (name, down) => input.virtual(name, down),
 });
 
 async function enter(name: string, go: () => Promise<void>): Promise<void> {
