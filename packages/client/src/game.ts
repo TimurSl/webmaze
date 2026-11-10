@@ -103,7 +103,7 @@ export class Game {
   }
   sensitivity = (() => { try { const v = parseFloat(localStorage.getItem('webmaze.sens') ?? ''); return v > 0 ? v : 1; } catch { return 1; } })();
   setSensitivity(v: number): void {
-    this.sensitivity = Math.max(0.2, Math.min(3, v));
+    this.sensitivity = Math.max(0.05, Math.min(3, v));
     try { localStorage.setItem('webmaze.sens', String(this.sensitivity)); } catch { /* ignore */ }
     this.ui.toast(`Look sensitivity ${Math.round(this.sensitivity * 100)}%`);
   }

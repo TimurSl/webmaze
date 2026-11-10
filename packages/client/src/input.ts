@@ -43,13 +43,16 @@ export class Input {
     return this.touch || document.pointerLockElement === this.canvas;
   }
 
-  /** Ask for raw (unaccelerated) mouse movement when the browser supports it, else plain pointer lock. */
+  /**
+   * Plain pointer lock, on purpose. Asking for `unadjustedMovement` makes the browser report raw sensor counts,
+   * which bypasses the OS pointer-speed setting: turn speed then scales directly with mouse DPI and a
+   * high-DPI mouse spins the camera many times faster than the same hand movement moves the desktop cursor.
+   */
   private lockPointer(): void {
-    const c = this.canvas as HTMLCanvasElement & { requestPointerLock(o?: { unadjustedMovement?: boolean }): Promise<void> | void };
     try {
-      const r = c.requestPointerLock({ unadjustedMovement: true });
-      if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => { try { void c.requestPointerLock(); } catch { /* ignore */ } });
-    } catch { try { void c.requestPointerLock(); } catch { /* ignore */ } }
+      const r = this.canvas.requestPointerLock() as Promise<void> | void;
+      if (r && typeof r.catch === 'function') r.catch(() => { /* lock refused (no gesture, or re-lock too soon) */ });
+    } catch { /* ignore */ }
   }
 
   releasePointer(): void {
