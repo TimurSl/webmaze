@@ -97,6 +97,7 @@ export class Net {
   rewind(x: number, z: number): void { this.send(C.rewind, { x, z }); }
   ping(x: number, z: number): void { this.send(C.ping, { x, z }); }
   say(text: string): void { this.send(C.say, { text }); }
+  secret(): void { this.send(C.secret); }
   opts(o: Partial<LobbyOptions>): void { this.send(C.opts, o); }
   reroll(): void { this.send(C.reroll); }
   start(): void { this.send(C.start); }

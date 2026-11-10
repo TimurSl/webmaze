@@ -7,13 +7,14 @@ import { lookPortrait } from './render/sprites';
 export interface UiHandlers {
   solo(name: string, seed: string): void;
   create(name: string, seed: string): void;
+  discovery(name: string, seed: string): void;
   join(name: string, code: string): void;
   login(name: string, pw: string): Promise<void>;
   register(name: string, pw: string): Promise<void>;
   logout(): void;
   start(): void;
   reroll(): void;
-  setOpts(o: { sharedWallet?: boolean; openMic?: boolean }): void;
+  setOpts(o: { sharedWallet?: boolean; openMic?: boolean; discovery?: boolean }): void;
   leave(): void;
   order(item: ItemId): void;
   again(): void;
@@ -24,9 +25,12 @@ export interface HudState {
   bits: number;
   held: number;
   inserted: number;
-  wakeIn: number;
   awake: boolean;
   guest: boolean;
+  /** the Konami secret room */
+  secret: boolean;
+  /** peaceful run */
+  discovery: boolean;
   battery: number;
   stamina: number;
   slots: (ItemId | null)[];
@@ -144,7 +148,8 @@ export class UI {
             </div>
           </fieldset>
           <fieldset><legend>New game</legend>
-            <div class="row"><button class="default" id="b-solo">Solo run</button><button id="b-create">Create room</button><span class="note">A room gets a code friends can join.</span></div>
+            <div class="row"><button class="default" id="b-solo">Solo run</button><button id="b-create">Create room</button><button id="b-disc" title="No monsters, no danger. Just wander and look at things.">Discovery walk</button></div>
+            <div class="note" style="margin-top:6px">A room gets a code friends can join. Discovery walk is the peaceful version: nothing hunts you.</div>
           </fieldset>
           <fieldset><legend>Join a friend</legend>
             <div class="row"><label class="field">Room code:<input id="m-code" type="text" maxlength="6" placeholder="ABCDEF" style="text-transform:uppercase" /></label><button id="b-join" style="align-self:flex-end">Join</button></div>
@@ -182,6 +187,7 @@ export class UI {
     const name = (): string => val('#m-name') || 'Guest';
     this.menu.querySelector('#b-solo')?.addEventListener('click', () => this.h.solo(name(), val('#m-seed')));
     this.menu.querySelector('#b-create')?.addEventListener('click', () => this.h.create(name(), val('#m-seed')));
+    this.menu.querySelector('#b-disc')?.addEventListener('click', () => this.h.discovery(name(), val('#m-seed')));
     this.menu.querySelector('#b-join')?.addEventListener('click', () => this.h.join(name(), val('#m-code')));
     this.menu.querySelector('#b-logout')?.addEventListener('click', () => this.h.logout());
     const authErr = (e: unknown): void => { const el = this.menu.querySelector('#a-err'); if (el) el.textContent = e instanceof Error ? e.message : String(e); };
@@ -215,6 +221,7 @@ export class UI {
       <fieldset><legend>Options${host ? '' : ' (host only)'}</legend>
         <label class="chk"><input type="checkbox" id="o-shared" ${m.opts.sharedWallet ? 'checked' : ''} ${host ? '' : 'disabled'}/>Shared wallet (one pool of bits for everyone)</label>
         <label class="chk"><input type="checkbox" id="o-mic" ${m.opts.openMic ? 'checked' : ''} ${host ? '' : 'disabled'}/>Open mic (otherwise push-to-talk with V)</label>
+        <label class="chk"><input type="checkbox" id="o-disc" ${m.opts.discovery ? 'checked' : ''} ${host ? '' : 'disabled'}/>Discovery mode (no monsters, no danger, more things to find; runs are not scored)</label>
       </fieldset>
       <div class="row end">
         <button class="default" id="l-start" ${host ? '' : 'disabled'}>${host ? 'Start run' : 'Waiting for host…'}</button>
@@ -236,6 +243,7 @@ export class UI {
     $('#l-start').onclick = () => this.h.start();
     $('#l-leave').onclick = () => this.h.leave();
     $<HTMLInputElement>('#o-shared').onchange = (e) => this.h.setOpts({ sharedWallet: (e.target as HTMLInputElement).checked });
+    $<HTMLInputElement>('#o-disc').onchange = (e) => this.h.setOpts({ discovery: (e.target as HTMLInputElement).checked });
     $<HTMLInputElement>('#o-mic').onchange = (e) => this.h.setOpts({ openMic: (e.target as HTMLInputElement).checked });
     const link = `${location.origin}${location.pathname}?room=${m.code}`;
     const copy = (e: Event): void => { e.preventDefault(); void navigator.clipboard?.writeText(link); this.toast('Invite link copied'); };
@@ -284,11 +292,12 @@ export class UI {
   }
 
   setHud(s: HudState): void {
-    this.set('h-floor', `Floor ${s.floor}${s.guest ? ' · Guestbook' : ''}`);
+    this.set('h-floor', s.secret ? 'Secret room' : `Floor ${s.floor}${s.guest ? ' · Guestbook' : ''}${s.discovery ? ' · Discovery' : ''}`);
     this.set('h-bits', `◆ ${s.bits} bits${s.shared ? ' (shared)' : ''}`);
     this.set('h-type', s.type);
-    this.set('h-disks', `<div class="tip">${s.guest ? 'Safe floor. Shop (B) then find the link.' : `💾 ${s.inserted}/3 inserted${s.held ? ` · carrying ${s.held}` : ''}${s.exitOpen ? ' · <b>link open</b>' : ''}`}</div>`);
-    this.set('h-wake', s.guest || (!s.awake && s.wakeIn <= 0) ? '' : s.awake ? '<div class="tip warn">IT IS AWAKE</div>' : `<div class="tip">It wakes in ${s.wakeIn}s</div>`);
+    this.set('h-disks', `<div class="tip">${s.secret ? 'Everything is free in here. Shop (B), take what you like, then step into the link.' : s.guest ? 'Safe floor. Shop (B) then find the link.' : `💾 ${s.inserted}/3 inserted${s.held ? ` · carrying ${s.held}` : ''}${s.exitOpen ? ' · <b>link open</b>' : ''}`}</div>`);
+    // no countdown: nobody is told when it wakes up, only that it has
+    this.set('h-wake', s.guest || !s.awake ? '' : '<div class="tip warn">IT IS AWAKE</div>');
     this.set('h-team', s.team.length > 1 ? s.team.map((t) => `<div class="member ${t.st === 1 ? 'down' : t.st === 2 ? 'ghost' : ''} ${t.me ? 'me' : ''}">${t.st === 1 ? '⚠ ' : t.st === 2 ? '👻 ' : ''}${esc(t.name)}</div>`).join('') : '');
     const stam = this.hud.querySelector<HTMLElement>('#h-stam'); if (stam) stam.style.width = `${Math.round(s.stamina * 100)}%`;
     const bat = this.hud.querySelector<HTMLElement>('#h-bat'); if (bat) bat.style.width = `${Math.min(100, Math.round((s.battery / 120) * 100))}%`;

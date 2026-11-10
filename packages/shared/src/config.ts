@@ -107,3 +107,15 @@ export const DIRECTOR = {
 
 /** Style-break distances (metres) to the nearest monster. */
 export const STYLE_BREAK = { bell: 15, grey: 10, heavy: 5 };
+
+/** The soda can: pops open and shoves every monster nearby back along the corridor, then stuns it. */
+export const SODA = {
+  /** metres */
+  range: 9,
+  /** tiles the monster is knocked back along the corridor, away from the player */
+  pushTiles: 3,
+  /** seconds frozen after the shove */
+  stun: 4,
+  /** seconds the Silhouette stays away afterwards (includes the stun) */
+  retreat: 12,
+};

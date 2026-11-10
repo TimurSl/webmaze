@@ -207,7 +207,7 @@ export class FloorView {
     portal.position.set(ex, WALL_H / 2, ez);
     this.group.add(portal);
     this.spin.push(portal);
-    const lt = labelTexture(f.type === 'guestbook' ? '[ next page ]' : '[ LOCKED ]', '#6a7aff', 'rgba(255,255,255,0.9)', 16);
+    const lt = labelTexture(f.secret ? '[ back to the maze ]' : f.type === 'guestbook' ? '[ next page ]' : '[ LOCKED ]', '#6a7aff', 'rgba(255,255,255,0.9)', 16);
     this.exitLabel = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.5), new THREE.MeshBasicMaterial({ map: lt, transparent: true, fog: false, depthTest: false }));
     this.exitLabel.position.set(ex, 2.3, ez); this.exitLabel.renderOrder = 5;
     this.group.add(this.exitLabel);
@@ -266,7 +266,7 @@ export class FloorView {
       this.group.add(tent);
       const v = this.billboardPlane(vendorTexture(), 1.5, 2, vx, vz + 0.2);
       v.position.y = 1;
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.6), new THREE.MeshBasicMaterial({ map: labelTexture('~*~ SIGN MY GUESTBOOK ~*~', '#ff30c0', 'rgba(255,255,160,0.95)', 14), fog: false }));
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.6), new THREE.MeshBasicMaterial({ map: labelTexture(f.secret ? '★ SECRET ROOM: ALL FREE ★' : '~*~ SIGN MY GUESTBOOK ~*~', '#ff30c0', 'rgba(255,255,160,0.95)', 14), fog: false }));
       sign.position.set(vx, 3.7, vz + 0.4); this.group.add(sign); this.face(sign);
     }
 
@@ -369,7 +369,7 @@ export class FloorView {
   setExitOpen(open: boolean): void {
     this.exitMat.color.setHex(open ? 0x40ff80 : 0x5060ff);
     this.exitMat.opacity = open ? 0.55 : 0.3;
-    const t = labelTexture(open ? '[ NEXT PAGE >> ]' : '[ LOCKED ]', open ? '#0030ff' : '#808090', 'rgba(255,255,255,0.92)', 16);
+    const t = labelTexture(open ? (this.floor.secret ? '[ BACK << ]' : '[ NEXT PAGE >> ]') : '[ LOCKED ]', open ? '#0030ff' : '#808090', 'rgba(255,255,255,0.92)', 16);
     this.ownTextures.push(t);
     (this.exitLabel.material as THREE.MeshBasicMaterial).map = t;
     (this.exitLabel.material as THREE.MeshBasicMaterial).needsUpdate = true;

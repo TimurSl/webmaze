@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bfsDist, findPath, floorParams, generateFloor, isGuestbook, los, TILE } from './index';
+import { ANOMALIES, FLOOR_TYPES, ITEMS, NPC_KINDS, PROP_KINDS, VENDOR_STOCK, bfsDist, findPath, floorParams, generateFloor, isGuestbook, los, TILE } from './index';
 
 const SEEDS = ['ABCDEFGH', 'K7QX2MPA', 'WEBMAZE1', 'ZZZZZZZZ'];
 
@@ -97,5 +97,54 @@ describe('floor generator', () => {
         expect(Math.abs(ds[i].tx - ds[j].tx) + Math.abs(ds[i].tz - ds[j].tz)).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('discovery floors are deterministic, show every floor type early and carry more anomalies', () => {
+    const types = new Set<string>();
+    for (const s of SEEDS) {
+      for (let floor = 2; floor <= 40; floor++) {
+        if (isGuestbook(floor)) continue;
+        const a = generateFloor(s, floor, { discovery: true });
+        const b = generateFloor(s, floor, { discovery: true });
+        expect(Buffer.from(a.solid).equals(Buffer.from(b.solid))).toBe(true);
+        expect(a.anomalies.length).toBeGreaterThanOrEqual(3);
+        expect(a.crowds.length).toBe(0);
+        types.add(a.type);
+      }
+    }
+    // corrupted normally needs floor 25
+    for (const t of FLOOR_TYPES.filter((x) => x.weight > 0)) expect(types.has(t.id), t.id).toBe(true);
+    expect(generateFloor('ABCDEFGH', 1, { discovery: true }).type).toBe('wallpaper');
+  });
+
+  it('the Konami secret room has everything and all of it is reachable', () => {
+    const f = generateFloor('ABCDEFGH', 7, { secret: true });
+    const g = generateFloor('ZZZZZZZZ', 3, { secret: true });
+    expect(f.secret).toBe(true);
+    expect(f.vendor).not.toBeNull();
+    expect(f.terminal).not.toBeNull();
+    expect(f.disks.length).toBe(3);
+    for (const a of ANOMALIES) expect(f.anomalies.some((x) => x.sub === a.id), a.id).toBe(true);
+    for (const k of PROP_KINDS) expect(f.props.some((x) => x.kind === k), k).toBe(true);
+    for (const k of NPC_KINDS) expect(f.npcs.some((x) => x.kind === k), k).toBe(true);
+    expect(f.npcs.some((x) => x.mimic)).toBe(true);
+    expect(f.exhibits!.map((e) => e.kind).sort()).toEqual(['mannequin', 'mimic', 'rat', 'silhouette']);
+    expect(f.crowds[0].members.length).toBeGreaterThan(5);
+    expect(f.bellTrees.length).toBeGreaterThan(0);
+    expect(f.hides.length).toBeGreaterThan(0);
+    expect(f.gifs.length).toBeGreaterThan(0);
+    // every inventory item is lying around, every other vendor item is on the vendor's list
+    const invItems = Object.values(ITEMS).filter((i) => i.kind === 'inv').map((i) => i.id);
+    for (const id of invItems) expect(f.items.some((x) => x.sub === id), id).toBe(true);
+    for (const id of Object.keys(ITEMS)) expect(VENDOR_STOCK.includes(id as never), id).toBe(true);
+    // it does not depend on the seed's layout, only on flavour
+    expect(Buffer.from(f.solid).equals(Buffer.from(g.solid))).toBe(true);
+    const d = bfsDist(f, f.entry.tx, f.entry.tz);
+    const reach = (p: { tx: number; tz: number }): boolean => d[p.tz * f.cols + p.tx] >= 0;
+    for (const e of [...f.disks, ...f.items, ...f.gifs, ...f.anomalies, ...f.bellTrees, ...f.props, ...f.npcs, ...f.hides]) expect(reach(e), e.id).toBe(true);
+    expect(reach(f.exit)).toBe(true);
+    expect(reach(f.terminal!)).toBe(true);
+    expect(reach(f.vendor!) || d[(f.vendor!.tz + 1) * f.cols + f.vendor!.tx] >= 0).toBe(true);
+    for (const ex of f.exhibits!) expect(d[Math.floor(ex.z / TILE) * f.cols + Math.floor(ex.x / TILE)]).toBeGreaterThanOrEqual(0);
   });
 });

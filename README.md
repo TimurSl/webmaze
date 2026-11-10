@@ -4,6 +4,23 @@ A co-op (1–6 players) first-person horror game that runs in the browser. You w
 
 Everything (textures, characters, sprites, audio) is generated procedurally in code. All characters are original.
 
+## Modes and secrets
+
+- **Discovery mode** (menu: *Discovery walk*, or the lobby checkbox): no monsters, no pop-ups, no 404, calm music. Every floor type shows up from floor 2 and floors hide more anomalies and GIFs, so it is a stroll through the weirdness. Runs are not scored.
+- **Soda can** (🥤, found on floors, 40 bits at the vendor): press 1–4 to pop it. Every monster within 9 m is shoved three tiles back along the corridor and frozen for 4 s, and the Silhouette then keeps away for about 10 s. Nothing near you means the can is kept.
+- **The Konami code** (↑ ↑ ↓ ↓ ← → ← → B A in the 3D view) drops the whole team into a secret room: one of every item, anomaly, prop, NPC (including a Mimic) and monster (frozen, harmless exhibits), plus a terminal, hiding spots and a vendor whose hand is free. Nothing in there pays bits or counts toward the score. Step into the link to return to the floor you left.
+- The countdown until the main monster wakes is no longer shown. The HUD only says when it is awake.
+
+## Sound
+
+All music and effects are synthesised in `packages/client/src/audio.ts`: original songs (a chord progression, melody, arpeggio and drums per floor type, in a MIDI/webcore style) and effects, so there are no licences to track. To use real recordings instead, put them in `packages/client/public/audio/` with a `manifest.json` that maps a name to a file, for example:
+
+```json
+{ "pickup": "pickup.ogg", "soda": "soda.ogg", "music:wallpaper": "dream.ogg", "music:calm": "calm.ogg" }
+```
+
+Effect names are the kinds passed to `play()` (`step`, `bell`, `modem`, `glitch`, `pickup`, `coin`, `insert`, `open`, `scan`, `revive`, `popup`, `click`, `squeak`, `creak`, `radio`, `buy`, `deny`, `hide`, `ping`, `death`, `soda`, `konami`). Music keys are `music:<floor type>`, `music:calm` (discovery) and `music:secret`. Only use files whose licence allows it (CC0 or public domain, or credit as required) and note their source.
+
 ## Run it
 
 Requires Node 22.5+ (the server uses the built-in `node:sqlite`).
@@ -36,7 +53,7 @@ This sets up a systemd service (127.0.0.1 only, state in `/var/lib/webmaze`) and
 
 ## Controls
 
-WASD/arrows move, mouse look, Shift sprint, C crouch, E interact (hold to revive), F flashlight, Q webcam (reveals hidden things), R scanner, M map, Tab bookmarks, B vendor menu on guestbook floors, 1–4 use item, Z rewind, G ping, V push to talk, Enter chat, Esc pause, [ and ] lower/raise look sensitivity (saved; also a slider in the pause window, next to a raw-mouse-input toggle). Mobile gets a virtual joystick, drag-to-look and on-screen buttons.
+WASD/arrows move, mouse look, Shift sprint, C crouch, E interact (hold to revive), F flashlight, Q webcam (reveals hidden things), R scanner, M map, Tab bookmarks, B vendor menu on guestbook floors, 1–4 use item (battery, glowsticks, radio, soda), Z rewind, G ping, V push to talk, Enter chat, Esc pause, [ and ] lower/raise look sensitivity (saved; also a slider in the pause window, next to a raw-mouse-input toggle). Mobile gets a virtual joystick, drag-to-look and on-screen buttons.
 
 ## Architecture
 

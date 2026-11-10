@@ -6,3 +6,4 @@ export * from './character';
 export * from './tables';
 export * from './floor';
 export * from './protocol';
+export * from './secret';
