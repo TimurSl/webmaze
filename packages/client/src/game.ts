@@ -39,7 +39,6 @@ export class Game {
   stamina = PLAYER.sprintTime;
   private tired = false;
   private eye: number = PLAYER.eye;
-  private bobT = 0;
   private stepAcc = 0;
   private flashOn = false;
   private webcamOn = false;
@@ -105,7 +104,15 @@ export class Game {
   setSensitivity(v: number): void {
     this.sensitivity = Math.max(0.05, Math.min(3, v));
     try { localStorage.setItem('webmaze.sens', String(this.sensitivity)); } catch { /* ignore */ }
-    this.ui.toast(`Look sensitivity ${Math.round(this.sensitivity * 100)}%`);
+  }
+
+  private openPause(): void {
+    this.ui.openHelp({
+      sensitivity: this.sensitivity,
+      raw: this.input.rawInput,
+      setSensitivity: (v) => this.setSensitivity(v),
+      setRaw: (on) => { this.input.setRawInput(on); this.input.releasePointer(); },
+    });
   }
 
   private addBookmark(kind: string, key: string, announce = true): void {
@@ -354,7 +361,7 @@ export class Game {
     if (input.consume('esc')) {
       if (this.ui.dialogueOpen) this.ui.closeDialogue();
       else if (this.ui.overlayKind) this.ui.closeOverlay();
-      else { this.ui.openHelp(); input.releasePointer(); }
+      else { this.openPause(); input.releasePointer(); }
     }
     if (!this.ui.chatEl) {
       if (input.consume('map')) this.toggleMap();
@@ -374,8 +381,8 @@ export class Game {
     this.scanCd = Math.max(0, this.scanCd - dt);
 
     // ---- look ----
-    if (input.consume('sensDown')) this.setSensitivity(this.sensitivity / 1.25);
-    if (input.consume('sensUp')) this.setSensitivity(this.sensitivity * 1.25);
+    if (input.consume('sensDown')) { this.setSensitivity(this.sensitivity / 1.25); this.ui.toast(`Look sensitivity ${Math.round(this.sensitivity * 100)}%`); }
+    if (input.consume('sensUp')) { this.setSensitivity(this.sensitivity * 1.25); this.ui.toast(`Look sensitivity ${Math.round(this.sensitivity * 100)}%`); }
     const [ldx, ldy] = input.takeLook();
     if (!blocked || this.ui.overlayKind === null) {
       const k = 0.0011 * this.sensitivity;
@@ -407,7 +414,6 @@ export class Game {
         const step = speed * mag * dt;
         const c = collide(f, this.px + dx * step, this.pz + dz * step, PLAYER.radius);
         this.px = c.x; this.pz = c.z;
-        this.bobT += dt * (sprinting ? 12 : crouch ? 5 : 8);
         this.stepAcc += step;
         if (this.stepAcc > (sprinting ? 2.4 : crouch ? 1.4 : 1.8)) { this.stepAcc = 0; if (!crouch) this.audio.play('step'); }
       }
@@ -454,7 +460,7 @@ export class Game {
     else {
       const target = crouch || this.hidden ? PLAYER.eyeCrouch : PLAYER.eye;
       this.eye += (target - this.eye) * Math.min(1, dt * 10);
-      cy = this.eye + (moving ? Math.sin(this.bobT) * (sprinting ? 0.06 : 0.035) : 0);
+      cy = this.eye;
     }
     cam.position.set(cx, cy, cz);
     cam.rotation.set(cpitch, cyaw, roll);
