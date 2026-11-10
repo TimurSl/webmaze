@@ -16,7 +16,7 @@
           src = self;
           nodejs = pkgs.nodejs_22;
           # Run `nix build` once with lib.fakeHash and paste the hash it prints.
-          npmDepsHash = pkgs.lib.fakeHash;
+          npmDepsHash = "sha256-1VmZYH7mw01GUeeYn5DFWVY8bM6Ic8IXBStEx1VJDcw=";
           npmBuildScript = "build";
           dontNpmInstall = true;
           installPhase = ''
