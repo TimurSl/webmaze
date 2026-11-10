@@ -36,7 +36,7 @@ This sets up a systemd service (127.0.0.1 only, state in `/var/lib/webmaze`) and
 
 ## Controls
 
-WASD/arrows move, mouse look, Shift sprint, C crouch, E interact (hold to revive), F flashlight, Q webcam (reveals hidden things), R scanner, M map, Tab bookmarks, B vendor menu on guestbook floors, 1–4 use item, Z rewind, G ping, V push to talk, Enter chat, H help. Mobile gets a virtual joystick, drag-to-look and on-screen buttons.
+WASD/arrows move, mouse look, Shift sprint, C crouch, E interact (hold to revive), F flashlight, Q webcam (reveals hidden things), R scanner, M map, Tab bookmarks, B vendor menu on guestbook floors, 1–4 use item, Z rewind, G ping, V push to talk, Enter chat, H help, [ and ] lower/raise look sensitivity (saved). Mobile gets a virtual joystick, drag-to-look and on-screen buttons.
 
 ## Architecture
 

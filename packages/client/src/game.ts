@@ -101,6 +101,13 @@ export class Game {
   mergeBookmarks(rows: { kind: string; key: string }[]): void {
     for (const r of rows) this.addBookmark(r.kind, r.key, false);
   }
+  sensitivity = (() => { try { const v = parseFloat(localStorage.getItem('webmaze.sens') ?? ''); return v > 0 ? v : 1; } catch { return 1; } })();
+  setSensitivity(v: number): void {
+    this.sensitivity = Math.max(0.2, Math.min(3, v));
+    try { localStorage.setItem('webmaze.sens', String(this.sensitivity)); } catch { /* ignore */ }
+    this.ui.toast(`Look sensitivity ${Math.round(this.sensitivity * 100)}%`);
+  }
+
   private addBookmark(kind: string, key: string, announce = true): void {
     const list = (this.bookmarks as unknown as Record<string, string[]>)[kind];
     if (!list || !key || list.includes(key)) return;
@@ -366,10 +373,13 @@ export class Game {
     this.scanCd = Math.max(0, this.scanCd - dt);
 
     // ---- look ----
+    if (input.consume('sensDown')) this.setSensitivity(this.sensitivity / 1.25);
+    if (input.consume('sensUp')) this.setSensitivity(this.sensitivity * 1.25);
     const [ldx, ldy] = input.takeLook();
     if (!blocked || this.ui.overlayKind === null) {
-      this.yaw -= ldx * 0.0022;
-      this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - ldy * 0.0022));
+      const k = 0.0011 * this.sensitivity;
+      this.yaw -= ldx * k;
+      this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - ldy * k));
     }
 
     // ---- movement ----

@@ -109,7 +109,7 @@ export class UI {
              <div class="row"><button id="b-login">Sign in</button><button id="b-reg">Create account</button><span class="smallnote">Optional. Guests keep Bookmarks in this browser only.</span></div><div class="err" id="a-err"></div>`}
       </div></div>
       <div class="panel"><h3>How to play</h3><div class="body smallnote">
-        WASD move · Shift sprint · C crouch · E interact (hold to revive) · F flashlight · Q webcam (reveals hidden things) · R scanner · M map · Tab bookmarks · B vendor menu on safe floors · 1-4 use item · Z Ctrl+Z · G ping · V push to talk · Enter chat. On a phone: left stick to move, drag to look, buttons on the right.<br>
+        WASD move · Shift sprint · C crouch · E interact (hold to revive) · F flashlight · Q webcam (reveals hidden things) · R scanner · M map · Tab bookmarks · B vendor menu on safe floors · 1-4 use item · Z Ctrl+Z · G ping · V push to talk · Enter chat · [ ] look sensitivity. On a phone: left stick to move, drag to look, buttons on the right.<br>
         Never fight. Walking is quieter than running. Listen to the music: when it thins out, something is near.
       </div></div>
       <div class="panel"><h3>Deepest runs</h3><div class="body"><table class="lb"><tr><th>#</th><th>Team</th><th>Floor</th><th>Bits</th><th>Seed</th></tr>${rows}</table></div></div>

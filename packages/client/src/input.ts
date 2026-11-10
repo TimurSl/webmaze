@@ -55,7 +55,7 @@ export class Input {
     if (down && !e.repeat) {
       const map: Record<string, string> = {
         KeyF: 'flash', KeyQ: 'webcam', KeyR: 'scan', KeyM: 'map', Tab: 'book', KeyB: 'shop', Digit1: 'use0', Digit2: 'use1', Digit3: 'use2',
-        Digit4: 'use3', KeyZ: 'rewind', KeyG: 'ping', Enter: 'chat', Escape: 'esc', KeyE: 'interact', Space: 'advance', KeyH: 'help',
+        Digit4: 'use3', KeyZ: 'rewind', KeyG: 'ping', Enter: 'chat', Escape: 'esc', KeyE: 'interact', Space: 'advance', KeyH: 'help', BracketLeft: 'sensDown', BracketRight: 'sensUp',
       };
       const n = map[k];
       if (n) this.pressed.add(n);
