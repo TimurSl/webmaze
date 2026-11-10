@@ -249,6 +249,7 @@ export class FloorView {
     // NPCs
     for (const n of f.npcs) {
       const sp = new CharacterSprite(n.look, n.name);
+      sp.surreal = true;
       sp.group.position.set(n.x, 0, n.z);
       this.group.add(sp.group);
       this.npcs.push({ id: n.id, sprite: sp });
