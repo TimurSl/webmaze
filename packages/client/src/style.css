@@ -156,6 +156,7 @@ dl.keys dd { margin: 0; }
 #hud .center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
 #hud .center .win { width: min(320px, 86vw); }
 #hud .prompt { top: 62%; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+#hud .lockhint { top: 54%; left: 50%; transform: translateX(-50%); white-space: nowrap; }
 #hud .crosshair { top: 50%; left: 50%; width: 4px; height: 4px; background: #fff; box-shadow: 0 0 0 1px #000; transform: translate(-50%, -50%); opacity: 0.85; }
 #hud .toasts { top: 64px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 3px; }
 #hud .toasts div { animation: toast 3.8s forwards; }

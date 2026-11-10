@@ -22,10 +22,24 @@ export class Input {
   /** running average of recent per-event motion, used to spot bogus jumps on non-raw locks */
   private typical = 0;
   private skipNext = false;
-  /** last applied event, to recognise the browser echoing its own cursor warp back as fake motion */
-  private prev = { dx: 0, dy: 0, t: 0 };
-  /** request raw (unaccelerated) mouse input on the next lock; saved */
-  rawInput = (() => { try { return localStorage.getItem('webmaze.raw') !== '0'; } catch { return true; } })();
+  /**
+   * Set by the game every frame: true while the player is in the 3D view with no window open, i.e. whenever the
+   * mouse ought to be captured. Drives automatic re-capture and the "click to capture" hint.
+   */
+  wantLock = false;
+  /** called when the browser drops the lock on its own (Esc, alt-tab, focus loss), not when we release it */
+  onLockLost: (() => void) | null = null;
+  /** a lock request is in flight */
+  private pending = 0;
+  /** we asked for the coming unlock ourselves, so it must not count as the player leaving */
+  private expectUnlock = false;
+  /** when the browser last dropped the lock on its own */
+  private lostAt = -1e9;
+  /** the most recent user gesture (click or key) and the last gesture a lock request was spent on */
+  private gesture = { id: 0, t: -1e9 };
+  private usedGesture = -1;
+  /** request raw (unaccelerated) mouse input on the next lock; saved. Off unless the player opts in. */
+  rawInput = (() => { try { return localStorage.getItem('webmaze.raw') === '1'; } catch { return false; } })();
 
   constructor(private canvas: HTMLCanvasElement, private overlayRoot: HTMLElement) {
     this.touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -33,14 +47,14 @@ export class Input {
     addEventListener('keyup', (e) => this.onKey(e, false));
     addEventListener('blur', () => { this.keys.clear(); this.lookDX = 0; this.lookDY = 0; this.interactHeld = false; this.talkHeld = false; });
     addEventListener('mousemove', (e) => this.onMouseMove(e));
-    document.addEventListener('pointerlockchange', () => {
-      this.lookDX = 0; this.lookDY = 0; this.typical = 0; this.prev.t = 0;
-      // the first event after (un)locking can carry the jump from the old cursor position to the lock point
-      this.skipNext = true;
-      if (document.pointerLockElement !== this.canvas) this.rawActive = false;
-    });
+    // Remember user gestures in the capture phase, so handlers that stop propagation (the chat box) can't hide them.
+    // Browsers only grant pointer lock shortly after one; Escape never counts as one.
+    addEventListener('keydown', (e) => { if (!e.repeat && e.code !== 'Escape') this.noteGesture(); }, true);
+    addEventListener('pointerdown', () => this.noteGesture(), true);
+    document.addEventListener('pointerlockchange', () => this.onLockChange());
+    document.addEventListener('pointerlockerror', () => { this.pending = 0; });
     canvas.addEventListener('mousedown', () => {
-      if (this.enabled && !this.touch && document.pointerLockElement !== canvas) this.lockPointer();
+      if (this.enabled && this.wantLock && !this.touch && !this.locked) this.lockPointer();
     });
     if (this.touch) this.buildTouch();
   }
@@ -54,17 +68,53 @@ export class Input {
     try { localStorage.setItem('webmaze.raw', on ? '1' : '0'); } catch { /* ignore */ }
   }
 
+  private noteGesture(): void {
+    this.gesture.id++;
+    this.gesture.t = performance.now();
+  }
+
+  private onLockChange(): void {
+    this.lookDX = 0; this.lookDY = 0; this.typical = 0;
+    this.pending = 0;
+    if (document.pointerLockElement === this.canvas) {
+      // the first event after locking can carry the jump from the old cursor position to the lock point
+      this.skipNext = true;
+      // a window opened while the request was in flight: give the cursor straight back
+      if (!this.wantLock) this.releasePointer();
+      return;
+    }
+    this.rawActive = false;
+    const expected = this.expectUnlock;
+    this.expectUnlock = false;
+    if (!expected && !document.pointerLockElement) {
+      this.lostAt = performance.now();
+      this.onLockLost?.();
+    }
+  }
+
+  /**
+   * Called once per frame after the game has set `wantLock`. If the mouse should be captured but isn't, and the
+   * player clicked or pressed a key moments ago (closing a window, clicking Resume, sending a chat line), capture it
+   * again without making them click the view a second time. Each gesture is spent on at most one request, so a
+   * refused request (e.g. Chrome's cool-down right after the player pressed Esc) is not retried in a loop; the HUD
+   * hint then asks for a click.
+   */
+  maintainLock(): void {
+    if (this.pending && performance.now() - this.pending > 2000) this.pending = 0; // request that never settled
+    if (this.touch || !this.enabled || !this.wantLock || this.locked || this.pending) return;
+    if (this.gesture.id !== this.usedGesture && performance.now() - this.gesture.t < 3000) this.lockPointer();
+  }
+
+  /** true when the mouse should be captured, isn't, and a click is needed */
+  get needsClick(): boolean {
+    return !this.touch && this.enabled && this.wantLock && !this.locked && !this.pending;
+  }
+
   /**
    * Every movement event is applied exactly as reported: no per-frame clamp, no smoothing. Clamping or dropping
    * ordinary motion loses more in one direction than the other, which makes the view drift away from where the
-   * hand put it.
-   *
-   * Plain (non-raw) pointer lock is emulated by the browser with a hidden OS cursor that it keeps warping back to
-   * the middle of the window. On some systems (notably Chromium on Linux, where raw input is not available, and
-   * under XWayland, VMs and remote desktops) that warp leaks through as an extra event that exactly undoes the
-   * previous one, or as one huge jump. Those make the view twitch and wander on its own, so on non-raw locks we
-   * drop an event that is the exact mirror of the one before it, and isolated spikes far above recent motion.
-   * Raw locks never do this and are passed through untouched.
+   * hand put it. The only events dropped are the jump some browsers report right after locking, and (on plain
+   * locks, which some browsers emulate by warping a hidden cursor) an isolated spike far above recent motion.
    */
   private onMouseMove(e: MouseEvent): void {
     if (document.pointerLockElement !== this.canvas || !this.enabled) return;
@@ -72,43 +122,38 @@ export class Input {
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     if (this.skipNext) { this.skipNext = false; if (Math.abs(dx) + Math.abs(dy) > 40) return; }
     const m = Math.max(Math.abs(dx), Math.abs(dy));
-    const now = e.timeStamp || performance.now();
-    if (!this.rawActive) {
-      const p = this.prev;
-      const mirror = now - p.t < 6 && Math.abs(p.dx) + Math.abs(p.dy) >= 4 && Math.abs(dx + p.dx) <= 1 && Math.abs(dy + p.dy) <= 1;
-      if (mirror) { p.t = 0; return; } // warp echo: the previous event was the real one
-      if (m > 150 && m > this.typical * 10 + 60) return; // isolated spike, not a real flick
-    }
+    if (!this.rawActive && m > 200 && m > this.typical * 10 + 80) return; // isolated spike, not a real flick
     this.typical += (m - this.typical) * 0.25;
-    this.prev.dx = dx; this.prev.dy = dy; this.prev.t = now;
     this.lookDX += dx; this.lookDY += dy;
   }
 
   /**
-   * Prefer raw input (`unadjustedMovement`): it bypasses OS pointer acceleration, so the same hand movement always
-   * turns the view by the same amount, and it avoids the cursor-recentring glitches of plain pointer lock.
-   * Falls back to plain lock where raw input is not supported.
+   * Plain pointer lock by default, so turn speed follows the desktop pointer speed. Raw input (`unadjustedMovement`)
+   * is opt-in from the pause menu: it skips OS acceleration but reports sensor counts, so turn speed then scales
+   * with mouse DPI. Falls back to plain lock where raw input is not supported.
    */
   private lockPointer(): void {
+    this.usedGesture = this.gesture.id;
     const c = this.canvas as HTMLCanvasElement & { requestPointerLock(o?: { unadjustedMovement?: boolean }): Promise<void> | void };
+    const settle = (r: Promise<void> | void, onRefused?: (err: unknown) => void): void => {
+      if (r && typeof r.then === 'function') r.then(() => { /* pointerlockchange does the rest */ }, (err: unknown) => { this.pending = 0; onRefused?.(err); });
+    };
     const plain = (): void => {
       this.rawActive = false;
-      try {
-        const r = c.requestPointerLock();
-        if (r && typeof r.catch === 'function') r.catch(() => { /* refused (no gesture, or re-lock too soon) */ });
-      } catch { /* ignore */ }
+      this.pending = performance.now();
+      try { settle(c.requestPointerLock()); } catch { this.pending = 0; }
     };
     if (!this.rawInput) { plain(); return; }
+    this.pending = performance.now();
     try {
       const r = c.requestPointerLock({ unadjustedMovement: true });
-      if (r && typeof r.then === 'function') {
-        r.then(() => { this.rawActive = true; }, (err: unknown) => { if ((err as { name?: string })?.name === 'NotSupportedError') plain(); });
-      } else this.rawActive = false; // browser ignored the option: treat as a plain lock
+      this.rawActive = !!r && typeof r.then === 'function'; // a browser that ignores the option returns nothing
+      settle(r, (err) => { this.rawActive = false; if ((err as { name?: string })?.name === 'NotSupportedError') plain(); });
     } catch { plain(); }
   }
 
   releasePointer(): void {
-    if (document.pointerLockElement) document.exitPointerLock();
+    if (document.pointerLockElement) { this.expectUnlock = true; document.exitPointerLock(); }
   }
 
   consume(name: string): boolean {
@@ -129,7 +174,10 @@ export class Input {
         Digit4: 'use3', KeyZ: 'rewind', KeyG: 'ping', Enter: 'chat', Escape: 'esc', KeyE: 'interact', Space: 'advance', KeyH: 'help', BracketLeft: 'sensDown', BracketRight: 'sensUp',
       };
       const n = map[k];
-      if (n) this.pressed.add(n);
+      // Esc while captured is the browser's own "release mouse" key: the lock-lost handler opens the pause menu, so
+      // the key itself must not also toggle it (browsers differ on whether, and in which order, it reaches the page)
+      const escUsedByBrowser = n === 'esc' && (document.pointerLockElement === this.canvas || performance.now() - this.lostAt < 500);
+      if (n && !escUsedByBrowser) this.pressed.add(n);
     }
     if (k === 'Tab' || k === 'Space') { if (this.enabled) e.preventDefault(); }
     if (down) this.keys.add(k); else this.keys.delete(k);

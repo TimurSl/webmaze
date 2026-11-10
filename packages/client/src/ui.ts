@@ -258,6 +258,7 @@ export class UI {
       <div class="bc hpanel" id="h-slots"></div>
       <div class="crosshair" id="h-cross"></div>
       <div class="prompt tip hidden" id="h-prompt"></div>
+      <div class="lockhint tip hidden" id="h-lock">Click to capture the mouse</div>
       <div class="toasts" id="h-toasts"></div>
       <div class="pings" id="h-pings"></div>
       <div class="center" id="h-center"></div>`;
@@ -269,6 +270,10 @@ export class UI {
     this.menu.classList.add('hidden'); this.lobby.classList.add('hidden'); this.over.classList.add('hidden');
     this.hud.classList.remove('hidden');
     this.showTaskbar(null);
+  }
+
+  setLockHint(show: boolean): void {
+    this.hud.querySelector('#h-lock')?.classList.toggle('hidden', !show);
   }
 
   private set(id: string, html: string): void {
@@ -427,7 +432,7 @@ export class UI {
       </fieldset>
       <fieldset><legend>Controls</legend>${CONTROLS}</fieldset>
       <div class="row end"><button class="default" id="p-resume">Resume</button><button id="p-leave">Leave run</button></div>`,
-      { close: true, status: ['Click the game view to capture the mouse again.'] });
+      { close: true, status: ['Esc or Resume to return to the game.'] });
     const sens = this.overlay.querySelector<HTMLInputElement>('#p-sens')!;
     const out = this.overlay.querySelector('#p-sens-v')!;
     sens.oninput = () => { const v = Number(sens.value) / 100; set.setSensitivity(v); out.textContent = pct(v); };
