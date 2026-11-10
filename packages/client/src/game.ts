@@ -338,6 +338,7 @@ export class Game {
     this.clock += dt;
     this.ui.tick(dt);
     if (this.playing && this.floor && this.view && !this.over) this.update(dt);
+    else this.input.takeLook(); // don't let mouse movement pile up while menus/lobby are showing
     this.gl.render(this.clock);
   }
 

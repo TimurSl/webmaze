@@ -17,6 +17,7 @@ export class Input {
   private touchRoot: HTMLElement | null = null;
   private knob: HTMLElement | null = null;
   private crouchToggle = false;
+  private ignoreLookUntil = 0;
 
   constructor(private canvas: HTMLCanvasElement, private overlayRoot: HTMLElement) {
     this.touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -24,16 +25,31 @@ export class Input {
     addEventListener('keyup', (e) => this.onKey(e, false));
     addEventListener('blur', () => { this.keys.clear(); this.interactHeld = false; this.talkHeld = false; });
     addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === this.canvas && this.enabled) { this.lookDX += e.movementX; this.lookDY += e.movementY; }
+      if (document.pointerLockElement !== this.canvas || !this.enabled) return;
+      if (performance.now() < this.ignoreLookUntil) return;
+      let dx = e.movementX, dy = e.movementY;
+      // browsers sometimes report one huge bogus delta (lock/unlock, focus changes): drop it
+      if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.abs(dx) > 300 || Math.abs(dy) > 300) return;
+      this.lookDX += dx; this.lookDY += dy;
     });
+    document.addEventListener('pointerlockchange', () => { this.lookDX = 0; this.lookDY = 0; this.ignoreLookUntil = performance.now() + 150; });
     canvas.addEventListener('mousedown', () => {
-      if (this.enabled && !this.touch && document.pointerLockElement !== canvas) void canvas.requestPointerLock?.();
+      if (this.enabled && !this.touch && document.pointerLockElement !== canvas) this.lockPointer();
     });
     if (this.touch) this.buildTouch();
   }
 
   get locked(): boolean {
     return this.touch || document.pointerLockElement === this.canvas;
+  }
+
+  /** Ask for raw (unaccelerated) mouse movement when the browser supports it, else plain pointer lock. */
+  private lockPointer(): void {
+    const c = this.canvas as HTMLCanvasElement & { requestPointerLock(o?: { unadjustedMovement?: boolean }): Promise<void> | void };
+    try {
+      const r = c.requestPointerLock({ unadjustedMovement: true });
+      if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => { try { void c.requestPointerLock(); } catch { /* ignore */ } });
+    } catch { try { void c.requestPointerLock(); } catch { /* ignore */ } }
   }
 
   releasePointer(): void {
@@ -82,7 +98,9 @@ export class Input {
   }
 
   takeLook(): [number, number] {
-    const r: [number, number] = [this.lookDX, this.lookDY];
+    // cap per-frame turn so a stalled frame or a spike can never fling the camera
+    const cap = 150;
+    const r: [number, number] = [Math.max(-cap, Math.min(cap, this.lookDX)), Math.max(-cap, Math.min(cap, this.lookDY))];
     this.lookDX = 0; this.lookDY = 0;
     return r;
   }
