@@ -152,7 +152,13 @@ dl.keys dd { margin: 0; }
 #hud .tr { top: 8px; right: 8px; min-width: 120px; max-width: 34vw; padding: 3px; }
 #hud .bl { bottom: 8px; left: 8px; width: 170px; }
 #hud .bl .lbl { font-size: 11px; margin-top: 2px; }
-#hud .bc { bottom: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 3px; }
+#hud .bl .srow.time { margin-top: 2px; }
+#hud .bl .sic { display: none; }
+#hud .bc { bottom: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 6px; }
+#hud .bc .hb { position: relative; }
+#h-slots { display: flex; gap: 2px; padding: 3px; }
+/* touch-only HUD pieces */
+#hud .tpack, #hud .tbar, #hud .tools, #hud .tmenu, #hud .tact { display: none; }
 #hud .center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
 #hud .center .win { width: min(320px, 86vw); }
 #hud .prompt { top: 62%; left: 50%; transform: translateX(-50%); white-space: nowrap; }
@@ -210,12 +216,81 @@ dl.keys dd { margin: 0; }
 .chat > .wb { padding: 4px; }
 
 /* ---------- touch ---------- */
+/* Same layout as a modern mobile shooter (status top left, menu buttons top right, stick left, actions right, hotbar
+   with a backpack at the bottom) but built from Windows 95 parts: grey bevels, navy blocks, square keys. */
+body.touch { --sl: max(10px, env(safe-area-inset-left)); --sr: max(10px, env(safe-area-inset-right)); --st: max(8px, env(safe-area-inset-top)); --sb: max(10px, env(safe-area-inset-bottom)); }
 #touch { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 #touch > * { pointer-events: auto; }
-#joy { position: absolute; left: 3vw; bottom: 5vh; width: 128px; height: 128px; border-radius: 50%; background: rgba(192, 192, 192, 0.35); box-shadow: inset 2px 2px rgba(0,0,0,0.5), inset -2px -2px rgba(255,255,255,0.5); }
+#joy { position: absolute; left: calc(var(--sl) + 2vw); bottom: calc(var(--sb) + 2vh); width: 128px; height: 128px; border-radius: 50%; background: rgba(192, 192, 192, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.5); box-shadow: inset 2px 2px rgba(0,0,0,0.5), inset -2px -2px rgba(255,255,255,0.5); }
 #knob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; background: var(--face); box-shadow: var(--raised); transform: translate(-50%, -50%); }
-#tbtns { position: absolute; right: 2vw; bottom: 3vh; width: 230px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
-.tb { width: 46px; height: 46px; min-width: 0; padding: 0; font-size: 20px; }
+#joy .ar { position: absolute; width: 0; height: 0; border: 7px solid transparent; opacity: 0.75; pointer-events: none; }
+#joy .ar.u { left: 50%; top: 5px; margin-left: -7px; border-top: 0; border-bottom-color: #fff; }
+#joy .ar.d { left: 50%; bottom: 5px; margin-left: -7px; border-bottom: 0; border-top-color: #fff; }
+#joy .ar.l { top: 50%; left: 5px; margin-top: -7px; border-left: 0; border-right-color: #fff; }
+#joy .ar.r { top: 50%; right: 5px; margin-top: -7px; border-right: 0; border-left-color: #fff; }
+
+/* square keys */
+.tb { width: 46px; height: 46px; min-width: 0; min-height: 0; padding: 0; font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; --px: 2; }
+.tb svg { width: calc(var(--px) * 12px); height: auto; display: block; pointer-events: none; }
+.tb:active:not(:disabled), .tb.down { padding: 0; box-shadow: var(--pressed); }
+.tb:active:not(:disabled) > *, .tb.down > * { transform: translate(1px, 1px); }
 .tb.on { box-shadow: var(--pressed); background: repeating-conic-gradient(var(--face) 0 25%, var(--hi) 0 50%) 0 0 / 2px 2px; }
-@media (max-height: 520px) { #hud .tr { display: none; } .tb { width: 40px; height: 40px; } #hud .bl { bottom: 150px; } }
+
+body.touch #hud .tpack, body.touch #hud .tbar, body.touch #hud .tools, body.touch #hud .tmenu, body.touch #hud .tact, body.touch #h-slots { pointer-events: auto; }
+body.touch #hud .bl { top: var(--st); bottom: auto; left: var(--sl); width: 150px; padding: 5px 6px; }
+body.touch #hud .bl .srow { display: grid; grid-template-columns: 14px 1fr; column-gap: 6px; align-items: center; }
+body.touch #hud .bl .srow + .srow { margin-top: 3px; }
+body.touch #hud .bl .sic { display: block; grid-row: 1 / span 2; grid-column: 1; }
+body.touch #hud .bl .sic svg { width: 14px; height: auto; display: block; }
+body.touch #hud .bl .srow.time .sic { grid-row: 1; }
+body.touch #hud .bl .lbl { font-size: 11px; margin: 0; line-height: 1.1; grid-column: 2; }
+body.touch #hud .bl .prog { height: 12px; padding: 2px; grid-column: 2; }
+body.touch #hud .bl .prog > i { background: repeating-linear-gradient(90deg, var(--navy) 0 6px, transparent 6px 8px); }
+body.touch #hud .bl .time .dim { grid-column: 2; margin: 0 !important; }
+body.touch #hud .tl { top: calc(var(--st) + 94px); left: var(--sl); min-width: 0; width: 150px; padding: 3px 6px; display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; }
+body.touch #hud .tc { top: var(--st); }
+body.touch #hud .tr { top: calc(var(--st) + 48px); right: var(--sr); min-width: 0; max-width: 30vw; font-size: 11px; }
+body.touch #hud .toasts { top: calc(var(--st) + 44px); }
+
+/* menu buttons, top right */
+body.touch #hud .tmenu { display: flex; gap: 6px; top: var(--st); right: var(--sr); }
+body.touch #hud .tmenu .tb { width: 40px; height: 40px; }
+body.standalone #hud #h-fs, body.standalone .fsbtn { display: none; }
+
+/* action keys, bottom right: use is the big one, sprint above it, crouch to its left, flashlight above that */
+body.touch #hud .tact { display: grid; grid-template-areas: 'flash sprint' 'crouch hand'; gap: 8px; align-items: end; justify-items: end; right: var(--sr); bottom: var(--sb); }
+body.touch #hud .tact .flash { grid-area: flash; width: 46px; height: 46px; font-size: 22px; }
+body.touch #hud .tact .sprint { grid-area: sprint; width: 58px; height: 58px; --px: 3; }
+body.touch #hud .tact .crouch { grid-area: crouch; width: 54px; height: 54px; --px: 3; }
+body.touch #hud .tact .hand { grid-area: hand; width: 72px; height: 72px; --px: 4; }
+
+/* hotbar with the backpack, and a tab that folds it away */
+body.touch #hud .bc { bottom: var(--sb); }
+body.touch #hud .tpack { display: flex; width: 48px; height: 48px; font-size: 26px; }
+body.touch #h-slots { padding: 3px; }
+body.touch .slot { width: 44px; height: 44px; }
+body.touch #hud .tbar { display: flex; position: absolute; left: 50%; top: -19px; margin-left: -26px; width: 52px; height: 17px; min-height: 0; padding: 0; align-items: center; justify-content: center; --px: 1; }
+body.touch #hud .tbar svg { transform: rotate(180deg); width: 12px; }
+body.touch #hud .tbar:active, body.touch #hud .tbar.down { padding: 0; }
+body.touch #hud .bc.folded #h-slots { display: none; }
+body.touch #hud .bc.folded .tbar { position: static; margin: 0; }
+body.touch #hud .bc.folded .tbar svg { transform: none; }
+body.touch #hud .tools:not(.hidden) { display: block; bottom: calc(var(--sb) + 78px); left: 50%; transform: translateX(-50%); }
+body.touch #hud .tools .grid { display: grid; grid-template-columns: repeat(4, 44px); gap: 4px; padding: 6px; }
+body.touch #hud .tools .tb { width: 44px; height: 44px; }
+body.touch .taskbar .fsbtn { display: flex; margin-left: auto; }
+body.touch .taskbar .tray { margin-left: 0; }
+.taskbar .fsbtn { display: none; min-width: 0; width: 26px; height: 22px; min-height: 0; padding: 0; align-items: center; justify-content: center; }
+.taskbar .fsbtn svg { width: 12px; height: 12px; }
+@media (max-height: 420px) {
+  #joy { width: 112px; height: 112px; }
+  body.touch #hud .tl { top: calc(var(--st) + 88px); }
+  body.touch #hud .tact .hand { width: 64px; height: 64px; --px: 3; }
+  body.touch #hud .tact .sprint { width: 52px; height: 52px; --px: 2; }
+  body.touch #hud .tact .crouch { width: 50px; height: 50px; --px: 2; }
+  body.touch #hud .tact .flash { width: 42px; height: 42px; }
+  body.touch #hud .tpack { width: 44px; height: 44px; font-size: 24px; }
+  body.touch .slot { width: 40px; height: 40px; font-size: 20px; }
+}
 @media (max-width: 560px) { .screen { padding: 8px 8px 40px; } .sheet { padding: 8px; } }

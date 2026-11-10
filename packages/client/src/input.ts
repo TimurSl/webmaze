@@ -12,11 +12,13 @@ export class Input {
   readonly touch: boolean;
   private keys = new Set<string>();
   private pressed = new Set<string>();
-  private joy = { id: -1, cx: 0, cy: 0, x: 0, y: 0 };
+  private joy = { id: -1, cx: 0, cy: 0, x: 0, y: 0, reach: 40 };
   private look = { id: -1, x: 0, y: 0 };
   private touchRoot: HTMLElement | null = null;
   private knob: HTMLElement | null = null;
   private crouchToggle = false;
+  private sprintBtn = false;
+  private joySprint = false;
   /** whether the current pointer lock delivers raw, unaccelerated mouse counts */
   private rawActive = false;
   /** running average of recent per-event motion, used to spot bogus jumps on non-raw locks */
@@ -56,6 +58,7 @@ export class Input {
     canvas.addEventListener('mousedown', () => {
       if (this.enabled && this.wantLock && !this.touch && !this.locked) this.lockPointer();
     });
+    document.body.classList.toggle('touch', this.touch);
     if (this.touch) this.buildTouch();
   }
 
@@ -212,53 +215,51 @@ export class Input {
     if (this.touchRoot) this.touchRoot.style.display = v ? 'block' : 'none';
   }
 
+  /**
+   * A touch-HUD button went down or up (the buttons themselves live in the UI). Use and talk are held, sprint is held,
+   * crouch toggles, everything else is a one-shot press. Returns the new state for toggles so the button can light up.
+   */
+  virtual(name: string, down: boolean): boolean | void {
+    switch (name) {
+      case 'interact': this.interactHeld = down; if (down) this.pressed.add('interact'); return;
+      case 'talk': this.talkHeld = down; return;
+      case 'sprint': this.sprintBtn = down; this.sprint = this.joySprint || this.sprintBtn; return;
+      case 'crouch':
+        if (!down) return;
+        this.crouchToggle = !this.crouchToggle; this.crouch = this.crouchToggle;
+        return this.crouchToggle;
+      default: if (down) this.pressed.add(name);
+    }
+  }
+
   private buildTouch(): void {
     const root = (this.touchRoot = document.createElement('div'));
     root.id = 'touch';
-    root.innerHTML = `
-      <div id="joy"><div id="knob"></div></div>
-      <div id="tbtns"></div>`;
+    root.innerHTML = '<div id="joy"><i class="ar u"></i><i class="ar d"></i><i class="ar l"></i><i class="ar r"></i><div id="knob"></div></div>';
     this.overlayRoot.appendChild(root);
     root.style.display = 'none';
     this.knob = root.querySelector('#knob');
-    const btns = root.querySelector('#tbtns') as HTMLElement;
-    const defs: [string, string, string][] = [
-      ['E', 'interact', 'hold'], ['💡', 'flash', ''], ['📹', 'webcam', ''], ['📡', 'scan', ''], ['🗺', 'map', ''], ['📖', 'book', ''],
-      ['⬇', 'crouch', 'toggle'], ['🛒', 'shop', ''], ['1', 'use0', ''], ['2', 'use1', ''], ['3', 'use2', ''], ['4', 'use3', ''], ['🎤', 'talk', 'hold'], ['📍', 'ping', ''],
-    ];
-    for (const [label, name, mode] of defs) {
-      const b = document.createElement('button');
-      b.textContent = label; b.className = 'tb'; b.dataset.n = name;
-      const down = (e: Event): void => {
-        e.preventDefault(); e.stopPropagation();
-        if (mode === 'hold') { if (name === 'interact') { this.interactHeld = true; this.pressed.add('interact'); } else this.talkHeld = true; }
-        else if (mode === 'toggle') { this.crouchToggle = !this.crouchToggle; this.crouch = this.crouchToggle; b.classList.toggle('on', this.crouchToggle); }
-        else this.pressed.add(name);
-      };
-      const up = (e: Event): void => {
-        e.preventDefault();
-        if (mode === 'hold') { if (name === 'interact') this.interactHeld = false; else this.talkHeld = false; }
-      };
-      b.addEventListener('touchstart', down, { passive: false });
-      b.addEventListener('touchend', up, { passive: false });
-      b.addEventListener('touchcancel', up, { passive: false });
-      btns.appendChild(b);
-    }
     const joy = root.querySelector('#joy') as HTMLElement;
     const onJoy = (e: TouchEvent): void => {
       for (const t of Array.from(e.changedTouches)) {
         if (e.type === 'touchstart' && this.joy.id < 0) {
           const r = joy.getBoundingClientRect();
           this.joy.id = t.identifier; this.joy.cx = r.left + r.width / 2; this.joy.cy = r.top + r.height / 2;
+          // full deflection is where the knob reaches the rim of the base; scales with the stick's size
+          this.joy.reach = (r.width - (this.knob?.offsetWidth ?? 50)) / 2;
         }
         if (t.identifier !== this.joy.id) continue;
-        if (e.type === 'touchend' || e.type === 'touchcancel') { this.joy.id = -1; this.joy.x = 0; this.joy.y = 0; this.sprint = false; if (this.knob) this.knob.style.transform = 'translate(-50%,-50%)'; continue; }
-        let dx = (t.clientX - this.joy.cx) / 55, dy = (t.clientY - this.joy.cy) / 55;
+        if (e.type === 'touchend' || e.type === 'touchcancel') {
+          this.joy.id = -1; this.joy.x = 0; this.joy.y = 0; this.joySprint = false; this.sprint = this.sprintBtn;
+          if (this.knob) this.knob.style.transform = 'translate(-50%,-50%)';
+          continue;
+        }
+        let dx = (t.clientX - this.joy.cx) / (this.joy.reach * 1.4), dy = (t.clientY - this.joy.cy) / (this.joy.reach * 1.4);
         const l = Math.hypot(dx, dy);
         if (l > 1) { dx /= l; dy /= l; }
         this.joy.x = dx; this.joy.y = dy;
-        this.sprint = l > 1.15;
-        if (this.knob) this.knob.style.transform = `translate(calc(-50% + ${dx * 40}px), calc(-50% + ${dy * 40}px))`;
+        this.joySprint = l > 1.15; this.sprint = this.joySprint || this.sprintBtn;
+        if (this.knob) this.knob.style.transform = `translate(calc(-50% + ${dx * this.joy.reach}px), calc(-50% + ${dy * this.joy.reach}px))`;
       }
       e.preventDefault();
     };

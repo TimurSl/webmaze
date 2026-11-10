@@ -2,6 +2,8 @@
 import {
   ANOMALIES, ITEMS, ItemId, Look, LobbyMsg, MONSTERS, NPC_KINDS, OverMsg, VENDOR_STOCK, priceMultiplier,
 } from '@webmaze/shared';
+import { ICON } from './icons';
+import { fullscreenSupported, isFullscreen, isStandalone, onFullscreenChange, toggleFullscreen } from './fullscreen';
 import { lookPortrait } from './render/sprites';
 
 export interface UiHandlers {
@@ -18,6 +20,8 @@ export interface UiHandlers {
   leave(): void;
   order(item: ItemId): void;
   again(): void;
+  /** a touch-HUD button went down or up; returns the new on/off state for toggles (crouch) */
+  press(name: string, down: boolean): boolean | void;
 }
 
 export interface HudState {
@@ -57,13 +61,7 @@ export interface PauseSettings {
   setRaw(on: boolean): void;
 }
 
-/** Pixel-art glyphs drawn as crisp SVG rects, like the 16-colour originals. */
-const pix = (rows: string[], color = '#000'): string => {
-  let r = '';
-  rows.forEach((line, y) => { for (let x = 0; x < line.length; x++) if (line[x] === '#') r += `<rect x="${x}" y="${y}" width="1" height="1"/>`; });
-  return `<svg width="${rows[0].length}" height="${rows.length}" viewBox="0 0 ${rows[0].length} ${rows.length}" fill="${color}" shape-rendering="crispEdges" aria-hidden="true">${r}</svg>`;
-};
-const X_GLYPH = pix(['##....##', '.##..##.', '..####..', '...##...', '..####..', '.##..##.', '##....##']);
+const X_GLYPH = ICON.close;
 const mazeIcon = (size: number): string =>
   `<svg width="${size}" height="${size}" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><rect width="16" height="16" fill="#0a0a30"/><path d="M2 2h12v12H2z M4 4v8h2V6h4v4H8v2h4V4z" fill="#ffe030" fill-rule="evenodd"/></svg>`;
 
@@ -82,7 +80,7 @@ const CONTROLS = `<dl class="keys">
   <dt><kbd>1</kbd>–<kbd>4</kbd> <kbd>Z</kbd></dt><dd>Use item · Ctrl+Z rewind</dd>
   <dt><kbd>G</kbd> <kbd>V</kbd> <kbd>Enter</kbd></dt><dd>Ping · push to talk · chat</dd>
   <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Look sensitivity (also in the pause menu)</dd>
-  <dt>Phone</dt><dd>Left stick to move, drag to look, buttons on the right</dd>
+  <dt>Phone</dt><dd>Left stick to move, drag to look. Right: hand = use (hold), arrows = sprint, figure = crouch. Backpack = tools, ⛶ = fullscreen</dd>
 </dl>`;
 
 export class UI {
@@ -113,10 +111,11 @@ export class UI {
     this.dlg = mk('dialogue', 'hidden');
     this.popupEl = mk('popup', 'hidden');
     this.taskbar = mk('taskbar', 'taskbar hidden');
-    this.taskbar.innerHTML = `<button class="start" tabindex="-1">${mazeIcon(16)}Webmaze</button><span class="sep"></span><button class="task" tabindex="-1"></button><span class="tray" id="tb-clock"></span>`;
+    this.taskbar.innerHTML = `<button class="start" tabindex="-1">${mazeIcon(16)}Webmaze</button><span class="sep"></span><button class="task" tabindex="-1"></button><button class="fsbtn" id="tb-fs" aria-label="Fullscreen" title="Fullscreen"></button><span class="tray" id="tb-clock"></span>`;
     const clock = (): void => { const el = this.taskbar.querySelector('#tb-clock'); if (el) el.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
     clock(); setInterval(clock, 15000);
     this.buildHud();
+    this.bindTouchHud();
     this.popupEl.innerHTML = win('CONGRATULATIONS!!!', '<div class="bd">YOU ARE THE 1,000,000th VISITOR!!!<br><small>(click to claim)</small></div>', { close: true });
   }
 
@@ -262,8 +261,38 @@ export class UI {
       <div class="tl hpanel"><div id="h-floor"></div><div id="h-bits"></div><div id="h-type" class="dim"></div></div>
       <div class="tc"><div id="h-disks"></div><div id="h-wake"></div></div>
       <div class="tr hpanel" id="h-team"></div>
-      <div class="bl hpanel"><div class="lbl">Stamina</div><div class="prog"><i id="h-stam"></i></div><div class="lbl">Battery</div><div class="prog"><i id="h-bat"></i></div><div id="h-bat-t" class="dim" style="margin-top:2px"></div></div>
-      <div class="bc hpanel" id="h-slots"></div>
+      <div class="bl hpanel">
+        <div class="srow"><span class="sic">${ICON.runner}</span><div class="lbl">Stamina</div><div class="prog"><i id="h-stam"></i></div></div>
+        <div class="srow"><span class="sic">${ICON.battery}</span><div class="lbl">Battery</div><div class="prog"><i id="h-bat"></i></div></div>
+        <div class="srow time"><span class="sic">${ICON.clock}</span><div id="h-bat-t" class="dim"></div></div>
+      </div>
+      <div class="bc" id="h-bc">
+        <button class="tb tpack" data-act="pack" aria-label="Tools" title="Tools">🎒</button>
+        <div class="hb"><button class="tb tbar" data-act="bar" aria-label="Hide or show the hotbar">${ICON.up}</button><div class="hpanel" id="h-slots"></div></div>
+      </div>
+      <div class="tools win hidden" id="h-tools">
+        <div class="title"><span class="tt">Tools</span></div>
+        <div class="grid">
+          <button class="tb" data-act="webcam" title="Webcam (Q)">📹</button>
+          <button class="tb" data-act="scan" title="Scanner (R)">📡</button>
+          <button class="tb" data-act="book" title="Bookmarks (Tab)">📖</button>
+          <button class="tb" data-act="shop" title="Vendor (B)">🛒</button>
+          <button class="tb" data-act="ping" title="Ping (G)">📍</button>
+          <button class="tb" data-act="talk" title="Push to talk (V)">🎤</button>
+          <button class="tb" data-act="rewind" title="Rewind (Z)">⏪</button>
+        </div>
+      </div>
+      <div class="tmenu">
+        <button class="tb" data-act="fs" id="h-fs" aria-label="Fullscreen" title="Fullscreen">${ICON.fsEnter}</button>
+        <button class="tb" data-act="map" aria-label="Map" title="Map">${ICON.pin}</button>
+        <button class="tb" data-act="esc" aria-label="Pause" title="Pause">${ICON.pause}</button>
+      </div>
+      <div class="tact">
+        <button class="tb big flash" data-act="flash" aria-label="Flashlight" title="Flashlight">💡</button>
+        <button class="tb big sprint" data-act="sprint" aria-label="Sprint" title="Sprint (hold)">${ICON.sprint}</button>
+        <button class="tb big crouch" data-act="crouch" aria-label="Crouch" title="Crouch">${ICON.crouch}</button>
+        <button class="tb big hand" data-act="interact" aria-label="Use" title="Use / interact (hold)">${ICON.hand}</button>
+      </div>
       <div class="crosshair" id="h-cross"></div>
       <div class="prompt tip hidden" id="h-prompt"></div>
       <div class="lockhint tip hidden" id="h-lock">Click to capture the mouse</div>
@@ -272,6 +301,70 @@ export class UI {
       <div class="center" id="h-center"></div>`;
     this.toastsEl = this.hud.querySelector('#h-toasts')!;
     this.pingsEl = this.hud.querySelector('#h-pings')!;
+  }
+
+  /**
+   * The touch buttons live in the HUD (hidden unless `body.touch`). One delegated handler serves them all: any element
+   * with `data-act` reports down/up to the input layer, so a held button (use, sprint, talk) keeps working while the
+   * other thumb steers. Pointer capture delivers the release even if the finger slides off the button.
+   */
+  private bindTouchHud(): void {
+    const held = new Map<number, HTMLElement>();
+    this.hud.addEventListener('pointerdown', (e) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
+      if (!el || !this.hud.contains(el)) return;
+      e.preventDefault(); e.stopPropagation();
+      try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      held.set(e.pointerId, el);
+      el.classList.add('down');
+      this.act(el, true);
+    });
+    const up = (e: PointerEvent): void => {
+      const el = held.get(e.pointerId);
+      if (!el) return;
+      held.delete(e.pointerId);
+      el.classList.remove('down');
+      this.act(el, false, e.type === 'pointerup');
+    };
+    for (const n of ['pointerup', 'pointercancel', 'lostpointercapture']) this.hud.addEventListener(n, up as EventListener);
+    // cancelling the touch sequence stops the browser sending a click afterwards (it would hit whatever opened underneath)
+    for (const n of ['touchstart', 'touchend']) {
+      this.hud.addEventListener(n, (e) => { if ((e.target as HTMLElement).closest('[data-act]')) e.preventDefault(); }, { passive: false });
+    }
+
+    const syncFs = (): void => {
+      const b = this.hud.querySelector('#h-fs'), t = this.taskbar.querySelector('#tb-fs');
+      for (const el of [b, t]) if (el) { el.innerHTML = isFullscreen() ? ICON.fsExit : ICON.fsEnter; el.setAttribute('title', isFullscreen() ? 'Exit fullscreen' : 'Fullscreen'); }
+    };
+    onFullscreenChange(syncFs);
+    syncFs();
+    // a home-screen launch is already fullscreen: nothing to toggle
+    if (isStandalone()) document.body.classList.add('standalone');
+    this.taskbar.querySelector('#tb-fs')?.addEventListener('click', () => void this.fullscreen());
+  }
+
+  /** Fullscreen button (HUD and taskbar). iPhone Safari cannot do it for web pages, so say what to do instead. */
+  private async fullscreen(): Promise<void> {
+    if (!fullscreenSupported()) { this.toast('Fullscreen is not available here. Use Share, then Add to Home Screen.'); return; }
+    await toggleFullscreen();
+  }
+
+  private act(el: HTMLElement, down: boolean, released = false): void {
+    const name = el.dataset.act!;
+    // Buttons that open a window fire on release, not on touch. The window appears a frame later, and the click the
+    // browser sends after a tap would otherwise land on its backdrop and close it again.
+    if (name === 'map' || name === 'book' || name === 'shop' || name === 'esc') {
+      if (down || !released) return;
+      this.hud.querySelector('#h-tools')?.classList.add('hidden');
+      this.hud.querySelector('[data-act="pack"]')?.classList.remove('on');
+      this.h.press(name, true);
+      return;
+    }
+    if (name === 'pack') { if (down) this.hud.querySelector('#h-tools')?.classList.toggle('hidden'); el.classList.toggle('on', !this.hud.querySelector('#h-tools')?.classList.contains('hidden')); return; }
+    if (name === 'bar') { if (down) this.hud.querySelector('#h-bc')?.classList.toggle('folded'); return; }
+    if (name === 'fs') { if (down) void this.fullscreen(); return; }
+    const on = this.h.press(name, down);
+    if (typeof on === 'boolean') el.classList.toggle('on', on);
   }
 
   showHud(): void {
@@ -302,7 +395,7 @@ export class UI {
     const stam = this.hud.querySelector<HTMLElement>('#h-stam'); if (stam) stam.style.width = `${Math.round(s.stamina * 100)}%`;
     const bat = this.hud.querySelector<HTMLElement>('#h-bat'); if (bat) bat.style.width = `${Math.min(100, Math.round((s.battery / 120) * 100))}%`;
     this.set('h-bat-t', `${Math.round(s.battery)}s left${s.webcam ? ' · 📹 REC' : ''}${s.scanCd > 0 ? ` · scan ${Math.ceil(s.scanCd)}s` : ''}`);
-    this.set('h-slots', s.slots.map((it, i) => `<div class="slot"><b>${i + 1}</b>${it ? ITEMS[it].icon : ''}${it === 'glowsticks' ? `<i>${s.glow || 3}</i>` : ''}</div>`).join(''));
+    this.set('h-slots', s.slots.map((it, i) => `<div class="slot" data-act="use${i}"><b>${i + 1}</b>${it ? ITEMS[it].icon : ''}${it === 'glowsticks' ? `<i>${s.glow || 3}</i>` : ''}</div>`).join(''));
     let center = '';
     if (s.downed) {
       const rv = s.downed.rv > 0;
