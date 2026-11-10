@@ -43,7 +43,7 @@
         {
           options.services.webmaze = {
             enable = lib.mkEnableOption "Webmaze game server";
-            domain = lib.mkOption { type = lib.types.str; example = "maze.example.com"; description = "Public domain, served over automatic HTTPS by Caddy."; };
+            domain = lib.mkOption { type = lib.types.str; example = "maze.example.com"; description = "Public domain, served over automatic HTTPS by nginx (certificates from Let's Encrypt)."; };
             port = lib.mkOption { type = lib.types.port; default = 2567; description = "Local port of the game server (bound to 127.0.0.1)."; };
             maxPlayersPerRoom = lib.mkOption { type = lib.types.ints.between 1 6 ; default = 6; };
             package = lib.mkOption { type = lib.types.package; default = self.packages.${pkgs.system}.default; };
@@ -73,18 +73,29 @@
               };
             };
 
-            services.caddy = {
+            services.nginx = {
               enable = true;
-              virtualHosts.${cfg.domain}.extraConfig = ''
-                handle_path /api/* {
-                  reverse_proxy 127.0.0.1:${toString cfg.port}
-                }
-                handle {
-                  root * ${cfg.package}/share/webmaze/client
-                  try_files {path} /index.html
-                  file_server
-                }
-              '';
+              recommendedProxySettings = true;
+              recommendedOptimisation = true;
+              recommendedGzipSettings = true;
+              virtualHosts.${cfg.domain} = {
+                forceSSL = true;
+                enableACME = true;
+                root = "${cfg.package}/share/webmaze/client";
+                locations."/" = {
+                  tryFiles = "$uri /index.html";
+                };
+                # Trailing slash on proxy_pass strips the /api prefix, like Caddy's handle_path.
+                # Upgrade headers are needed for the game server's WebSocket connections.
+                locations."/api/" = {
+                  proxyPass = "http://127.0.0.1:${toString cfg.port}/";
+                  proxyWebsockets = true;
+                };
+              };
+            };
+
+            security.acme = {
+              acceptTerms = true;
             };
 
             networking.firewall.allowedTCPPorts = [ 80 443 ];

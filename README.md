@@ -49,7 +49,7 @@ Share a room by its 6-letter code or `?room=CODE`. Solo play creates a private r
 services.webmaze = { enable = true; domain = "maze.example.com"; };
 ```
 
-This sets up a systemd service (127.0.0.1 only, state in `/var/lib/webmaze`) and Caddy with automatic HTTPS. `npmDepsHash` is currently `lib.fakeHash`: run `nix build` once and paste the hash it prints.
+This sets up a systemd service (127.0.0.1 only, state in `/var/lib/webmaze`) and nginx with automatic HTTPS (Let's Encrypt via ACME). `npmDepsHash` is currently `lib.fakeHash`: run `nix build` once and paste the hash it prints.
 
 ## Controls
 
