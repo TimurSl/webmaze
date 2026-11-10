@@ -73,6 +73,8 @@ export abstract class Mob {
   repath = 0;
   /** copied player (mimic) */
   copy?: string;
+  /** frozen until this world time (soda can) */
+  stunUntil = 0;
   constructor(public id: string, public kind: MonsterKind, public x: number, public z: number) {}
 
   abstract update(w: World, dt: number): void;

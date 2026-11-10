@@ -6,9 +6,11 @@ export interface LobbyOptions {
   /** one pool of bits for everyone (false = one wallet per player) */
   sharedWallet: boolean;
   openMic: boolean;
+  /** peaceful exploring: no monsters, no pop-ups, no 404, floors show every type and more anomalies */
+  discovery: boolean;
 }
 
-export const DEFAULT_OPTIONS: LobbyOptions = { sharedWallet: false, openMic: false };
+export const DEFAULT_OPTIONS: LobbyOptions = { sharedWallet: false, openMic: false, discovery: false };
 
 export interface PlayerInfo {
   id: string;
@@ -50,6 +52,8 @@ export const C = {
   ping: 'ping',
   rewind: 'rewind',
   say: 'say',
+  /** the Konami code was entered */
+  secret: 'secret',
 } as const;
 
 export interface InteractMsg { kind: InteractKind; id: string }
@@ -80,8 +84,10 @@ export interface LobbyMsg {
 export interface FloorMsg {
   floor: number;
   seed: string;
-  /** seconds until the main monster wakes (0 on safe floors) */
-  wakeIn: number;
+  /** peaceful run: the client generates the same discovery-flavoured floor */
+  discovery: boolean;
+  /** the secret room instead of the numbered floor */
+  secret: boolean;
   spawn: { x: number; z: number };
 }
 
@@ -155,8 +161,6 @@ export interface Snap {
   tn: number;
   /** exit hold progress 0-1 */
   xp: number;
-  /** seconds until the main monster wakes (0 = awake / safe floor) */
-  wk: number;
 }
 
 export interface InvMsg {
@@ -191,6 +195,7 @@ export type EvMsg =
   | { k: 'bleed'; id: string }
   | { k: 'ping'; by: string; x: number; z: number }
   | { k: 'say'; by: string; text: string }
+  | { k: 'soda'; x: number; z: number; by: string }
   | { k: 'discover'; kind: 'monster' | 'anomaly' | 'npc'; id: string };
 
 export interface DlgMsg {

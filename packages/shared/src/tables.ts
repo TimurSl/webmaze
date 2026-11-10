@@ -2,7 +2,7 @@
 
 export type ItemId =
   | 'battery' | 'glowsticks' | 'radio' | 'sprintchip' | 'softshoes' | 'scannerrange'
-  | 'floortip' | 'monstertip' | 'ghost' | 'ctrlz';
+  | 'floortip' | 'monstertip' | 'ghost' | 'ctrlz' | 'soda';
 
 export interface ItemDef {
   id: ItemId;
@@ -25,15 +25,16 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   monstertip: { id: 'monstertip', name: 'Monster tip', cost: 120, desc: "Shows the main monster's weakness", kind: 'special', icon: '👁' },
   ghost: { id: 'ghost', name: 'Buy back a ghost', cost: 150, desc: 'Revives a dead teammate', kind: 'special', icon: '👻' },
   ctrlz: { id: 'ctrlz', name: 'Ctrl+Z', cost: 200, desc: 'Rewind yourself 5 s, once', kind: 'inv', icon: '↩' },
+  soda: { id: 'soda', name: 'Fizzy soda', cost: 40, desc: 'Shake and pop: shoves monsters away and stuns them', kind: 'inv', icon: '🥤' },
 };
 
 export const VENDOR_STOCK: ItemId[] = [
-  'battery', 'glowsticks', 'radio', 'sprintchip', 'softshoes', 'scannerrange',
+  'battery', 'glowsticks', 'radio', 'soda', 'sprintchip', 'softshoes', 'scannerrange',
   'floortip', 'monstertip', 'ghost', 'ctrlz',
 ];
 
 /** Items that can lie around on a floor. */
-export const FLOOR_ITEMS: ItemId[] = ['battery', 'glowsticks', 'radio'];
+export const FLOOR_ITEMS: ItemId[] = ['battery', 'glowsticks', 'radio', 'soda'];
 
 export type FloorType =
   | 'wallpaper' | 'geocities' | 'chatroom' | 'desktop' | 'flip' | 'park' | 'server' | 'corrupted' | 'guestbook';

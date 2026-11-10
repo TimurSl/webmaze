@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import {
   ANOMALIES, ASnap, DlgMsg, EvMsg, F_CROUCH, F_FLASH, F_SPRINT, F_TALK, F_WEBCAM, FLOOR_TYPE_BY_ID, FloorData, FloorMsg, GameState,
   ITEMS, InvMsg, ItemId, Look, LobbyMsg, MONSTER_BY_ID, MSnap, OverMsg, PLAYER, PSnap, RULES, SNAP_HZ, STYLE_BREAK, Snap, ST_ALIVE, ST_DOWNED,
-  ST_GHOST, TICK_HZ, TILE, WALL_H, centerOf, collide, dist, generateFloor, isGuestbook, los, tileOf, playerLook,
+  ST_GHOST, TICK_HZ, TILE, WALL_H, centerOf, collide, dist, generateFloor, los, tileOf, playerLook,
 } from '@webmaze/shared';
 import { AudioEngine } from './audio';
 import { Input } from './input';
@@ -77,6 +77,12 @@ export class Game {
   private tmpV = new THREE.Vector3();
   private lastHunt = false;
   private hurtFlash = 0;
+  /** peaceful run (discovery mode) */
+  discovery = false;
+  /** the Konami secret room is showing */
+  inSecret = false;
+  private konami = 0;
+  private sodaFlash = 0;
 
   constructor(private canvas: HTMLCanvasElement, public ui: UI, public input: Input, public audio: AudioEngine, public net: Net) {
     this.gl = new PixelRenderer(canvas);
@@ -87,7 +93,18 @@ export class Game {
     input.onLockLost = () => {
       if (this.playing && !this.over && !this.ui.blocking && !input.touch) this.openPause();
     };
+    addEventListener('keydown', (e) => this.onKonamiKey(e));
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /** ↑ ↑ ↓ ↓ ← → ← → B A, typed in the 3D view. The server decides whether to open the secret room. */
+  private onKonamiKey(e: KeyboardEvent): void {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (e.repeat || tag === 'INPUT' || tag === 'TEXTAREA' || !this.playing || this.over || this.inSecret) { return; }
+    const SEQ = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
+    if (e.code === SEQ[this.konami]) this.konami++;
+    else this.konami = e.code === SEQ[0] ? 1 : 0;
+    if (this.konami === SEQ.length) { this.konami = 0; this.net.secret(); }
   }
 
   get myState(): number {
@@ -147,7 +164,9 @@ export class Game {
     for (const mv of this.mobs.values()) this.gl.scene.remove(mv.mesh);
     this.remotes.clear(); this.mobs.clear(); this.snaps = []; this.marks = []; this.pings = []; this.taken.clear(); this.glowSticks = [];
     this.floorNum = m.floor;
-    this.floor = generateFloor(m.seed, m.floor);
+    this.discovery = m.discovery;
+    this.inSecret = m.secret;
+    this.floor = generateFloor(m.seed, m.floor, { discovery: m.discovery, secret: m.secret });
     this.view = new FloorView(this.floor);
     this.gl.scene.add(this.view.group);
     this.gl.scene.fog = this.view.fog;
@@ -161,12 +180,13 @@ export class Game {
     this.pitch = 0; this.stamina = this.maxStamina(); this.tired = false; this.hidden = false; this.held = 0; this.lastInserted = 0;
     this.history = []; this.myPopup = false; this.ui.popup(false);
     this.explored = new Uint8Array(this.floor.cols * this.floor.rows);
-    this.audio.setFloor(this.floor.type, m.seed, m.floor);
+    this.audio.setFloor(this.floor.type, m.seed, m.floor, m.secret ? 'secret' : m.discovery ? 'calm' : 'normal');
+    if (m.secret) this.audio.play('konami');
     this.playing = true;
     this.ui.showHud();
     this.input.enabled = true;
     this.input.setTouchVisible(true);
-    this.ui.toast(`Floor ${m.floor}: ${FLOOR_TYPE_BY_ID[this.floor.type].name}`);
+    this.ui.toast(m.secret ? '★ SECRET ROOM ★ One of everything. The vendor is free.' : `Floor ${m.floor}: ${FLOOR_TYPE_BY_ID[this.floor.type].name}${m.discovery ? ' · discovery' : ''}`);
     this.view.setExitOpen(this.floor.type === 'guestbook');
     if (this.gs) this.view.setTakenIds(this.taken);
   }
@@ -176,11 +196,9 @@ export class Game {
     if (this.snaps.length > 12) this.snaps.shift();
     this.view?.setArms(s.a);
     this.tension = s.tn;
-    this.wakeIn = s.wk;
     this.exitProg = s.xp;
   }
   private tension = 0;
-  private wakeIn = 0;
   private exitProg = 0;
 
   onGs(g: GameState): void {
@@ -284,6 +302,11 @@ export class Game {
         if (e.id === this.youId) { this.myPopup = false; this.ui.popup(false); this.audio.play('click'); }
         break;
       case 'radio': this.audio.play('radio', e.x, e.z); break;
+      case 'soda':
+        this.audio.play('soda', e.x, e.z);
+        this.sodaFlash = 0.6;
+        this.ui.toast(e.by === this.youId ? 'PSSHT! Whatever was near got shoved back.' : `${this.nameOf(e.by)} popped a soda!`);
+        break;
       case 'glow': view?.addGlowStick(e.x, e.z); this.glowSticks.push({ x: e.x, z: e.z }); break;
       case 'hint': this.marks.push({ kind: 'disk', x: e.x, z: e.z, until: performance.now() + 30000, id: 'hint' }); this.ui.toast('They pointed somewhere. Check the map (M).'); break;
       case 'tip': this.ui.toast(e.text); break;
@@ -475,7 +498,7 @@ export class Game {
     // ---- world view ----
     view.update(dt, cx, cz, this.webcamOn);
     const lightOn = this.flashOn && this.inv.battery > 0 && alive;
-    const baseFar = f.type === 'park' ? 38 : f.type === 'chatroom' ? 16 : 24;
+    const baseFar = f.secret ? 70 : f.type === 'park' ? 38 : f.type === 'chatroom' ? 16 : 24;
     const farTarget = lightOn ? baseFar + 10 : baseFar * 0.55;
     view.fog.far += (farTarget - view.fog.far) * Math.min(1, dt * 4);
     view.fog.near = lightOn ? 4 : 1.5;
@@ -490,7 +513,8 @@ export class Game {
     // ---- HUD ----
     this.hudUpdate(st, crouch);
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.4);
-    this.gl.fx.flash = this.hurtFlash * 0.7;
+    this.sodaFlash = Math.max(0, this.sodaFlash - dt * 2.5);
+    this.gl.fx.flash = Math.max(this.hurtFlash * 0.7, this.sodaFlash);
     this.ui.setFx(st === ST_DOWNED ? 0.6 + Math.sin(this.clock * 6) * 0.2 : this.hurtFlash * 0.6);
 
     // ---- mouse capture ----
@@ -509,7 +533,7 @@ export class Game {
 
   private toggleShop(): void {
     if (this.ui.overlayKind === 'shop') { this.ui.closeOverlay(); return; }
-    if (this.ui.overlayKind || !this.floor || !isGuestbook(this.floorNum)) return;
+    if (this.ui.overlayKind || !this.floor || this.floor.type !== 'guestbook') return;
     if (this.myState !== ST_ALIVE) return;
     const ghosts = Object.values(this.gs?.states ?? {}).filter((s) => s === ST_GHOST).length;
     this.input.releasePointer();
@@ -696,7 +720,7 @@ export class Game {
   private updateStyleBreak(dt: number, cx: number, cz: number): void {
     let nearest = Infinity;
     let hunting = false;
-    for (const mv of this.mobs.values()) {
+    for (const mv of this.inSecret ? [] : this.mobs.values()) { // the secret room's exhibits are harmless
       if (mv.kind === 'rat') continue;
       const d = dist(cx, cz, mv.x, mv.z);
       if (d < nearest) nearest = d;
@@ -727,7 +751,7 @@ export class Game {
     if (this.view) {
       for (const bt of this.view.bellTrees) {
         let near = false;
-        for (const mv of this.mobs.values()) if (mv.kind !== 'rat' && dist(bt.x, bt.z, mv.x, mv.z) < STYLE_BREAK.bell) { near = true; break; }
+        if (!this.inSecret) for (const mv of this.mobs.values()) if (mv.kind !== 'rat' && dist(bt.x, bt.z, mv.x, mv.z) < STYLE_BREAK.bell) { near = true; break; }
         const cd = this.treeCool.get(bt.id) ?? 0;
         if (near && now > cd) { this.treeCool.set(bt.id, now + 5); this.view.ringTree(bt.id); this.audio.play('bell', bt.x, bt.z); }
       }
@@ -820,12 +844,12 @@ export class Game {
     void me; void crouch;
     const pm = this.snaps.length ? this.snaps[this.snaps.length - 1].s.p.find((q) => q.i === this.youId) : undefined;
     const hs: HudState = {
-      floor: this.floorNum, bits: this.balance(), held: this.held, inserted: this.gs?.inserted ?? 0, wakeIn: this.wakeIn,
-      awake: this.gs?.awake ?? false, guest: f.type === 'guestbook', battery: this.inv.battery, stamina: this.stamina / this.maxStamina(),
+      floor: this.floorNum, bits: this.balance(), held: this.held, inserted: this.gs?.inserted ?? 0,
+      secret: this.inSecret, discovery: this.discovery, awake: this.gs?.awake ?? false, guest: f.type === 'guestbook', battery: this.inv.battery, stamina: this.stamina / this.maxStamina(),
       slots: this.inv.slots, glow: this.inv.glow, team,
       downed: st === ST_DOWNED ? { bleed: pm?.bl ?? 1, rv: pm?.rv ?? 0 } : null, ghost: st === ST_GHOST,
       exitOpen: this.gs?.exitOpen ?? f.type === 'guestbook', exitProgress: this.exitProg, scanCd: this.scanCd, webcam: this.webcamOn,
-      type: FLOOR_TYPE_BY_ID[f.type].name, shared: this.gs?.shared ?? false,
+      type: this.inSecret ? 'Everything room' : FLOOR_TYPE_BY_ID[f.type].name, shared: this.gs?.shared ?? false,
     };
     this.ui.setHud(hs);
     void SNAP_HZ;

@@ -12,13 +12,18 @@ const root = document.getElementById('ui') as HTMLElement;
 let game!: Game;
 let account: { token: string; name: string } | null = null;
 let autoStart = false;
+let autoDiscovery = false;
 let lastName = localStorage.getItem('webmaze.name') ?? '';
 const audio = new AudioEngine();
 
 const handlers: NetHandlers = {
   lobby: (m) => {
     game.onLobby(m);
-    if (autoStart && !m.started && m.players.find((p) => p.id === m.youId)?.host) { autoStart = false; net.start(); }
+    if (autoStart && !m.started && m.players.find((p) => p.id === m.youId)?.host) {
+      autoStart = false;
+      if (autoDiscovery) { autoDiscovery = false; net.opts({ discovery: true }); }
+      net.start();
+    }
   },
   floor: (m) => game.onFloor(m),
   snap: (m) => game.onSnap(m),
@@ -47,6 +52,7 @@ async function toMenu(err = ''): Promise<void> {
 
 const ui = new UI(root, {
   solo: (name, seed) => { autoStart = true; void enter(name, () => net.create({ name, seed, code: randomRoomCode(), token: account?.token })); },
+  discovery: (name, seed) => { autoStart = true; autoDiscovery = true; void enter(name, () => net.create({ name, seed, code: randomRoomCode(), token: account?.token })); },
   create: (name, seed) => void enter(name, () => net.create({ name, seed, code: randomRoomCode(), token: account?.token })),
   join: (name, code) => {
     if (!/^[A-Za-z]{6}$/.test(code)) { ui.menuError('Room codes are 6 letters.'); return; }
@@ -58,7 +64,7 @@ const ui = new UI(root, {
   start: () => net.start(),
   reroll: () => net.reroll(),
   setOpts: (o) => net.opts(o),
-  leave: () => { net.leave(); autoStart = false; void toMenu(); },
+  leave: () => { net.leave(); autoStart = false; autoDiscovery = false; void toMenu(); },
   order: (item) => net.buy({ item }),
   again: () => { net.leave(); void toMenu(); },
 });
@@ -67,7 +73,7 @@ async function enter(name: string, go: () => Promise<void>): Promise<void> {
   audio.start(); // needs a user gesture
   lastName = name; localStorage.setItem('webmaze.name', name);
   try { await go(); } catch (e) {
-    autoStart = false;
+    autoStart = false; autoDiscovery = false;
     ui.menuError(e instanceof Error ? e.message : 'Could not connect to the server.');
   }
 }

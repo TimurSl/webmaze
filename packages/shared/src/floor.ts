@@ -5,8 +5,9 @@ import { Look, randomLook } from './character';
 import { Grid, bfsDist, centerOf } from './nav';
 import { PALETTES } from './palettes';
 import { Rng, rngFor } from './rng';
+import { generateSecretRoom } from './secret';
 import {
-  ANOMALIES, FLOOR_ITEMS, FLOOR_TYPES, FloorType, ItemId, NPC_KINDS, NPC_NAMES, NpcKind, PROP_KINDS, PropKind,
+  ANOMALIES, FLOOR_ITEMS, FLOOR_TYPES, FloorType, ItemId, MonsterKind, NPC_KINDS, NPC_NAMES, NpcKind, PROP_KINDS, PropKind,
 } from './tables';
 
 export interface TilePos { tx: number; tz: number }
@@ -19,6 +20,15 @@ export interface Npc extends TilePos {
   id: string; kind: NpcKind; name: string; mimic: boolean; line: number; item?: ItemId; look: Look; x: number; z: number;
 }
 export interface HideSpot extends TilePos { id: string; x: number; z: number; face: number }
+/** Secret room only: a monster standing still on display. */
+export interface Exhibit { kind: MonsterKind; x: number; z: number }
+
+export interface FloorFlags {
+  /** peaceful run: every floor type from floor 2, more anomalies and GIFs, no mannequin crowds */
+  discovery?: boolean;
+  /** the Konami secret room instead of a numbered floor */
+  secret?: boolean;
+}
 
 export interface FloorData extends Grid {
   seed: string;
@@ -45,11 +55,15 @@ export interface FloorData extends Grid {
   ratSpawns: TilePos[];
   /** flip maze only: second layout rendered as the ceiling */
   ceilSolid: Uint8Array | null;
+  /** true for the Konami secret room (rendered like a guestbook floor) */
+  secret?: boolean;
+  exhibits?: Exhibit[];
 }
 
-export function rollFloorType(rng: Rng, floor: number): FloorType {
+export function rollFloorType(rng: Rng, floor: number, discovery = false): FloorType {
   if (floor <= 1) return 'wallpaper';
-  const pool = FLOOR_TYPES.filter((t) => t.weight > 0 && t.from <= floor);
+  // discovery mode shows every kind of floor straight away
+  const pool = FLOOR_TYPES.filter((t) => t.weight > 0 && (discovery || t.from <= floor));
   return rng.weighted(pool, (t) => t.weight).id;
 }
 
@@ -82,10 +96,12 @@ function carveMaze(n: number, rng: Rng): Uint8Array {
   return solid;
 }
 
-export function generateFloor(runSeed: string, floor: number): FloorData {
+export function generateFloor(runSeed: string, floor: number, flags: FloorFlags = {}): FloorData {
+  if (flags.secret) return generateSecretRoom(runSeed);
+  const discovery = !!flags.discovery;
   const rng = rngFor(runSeed, floor, 'layout');
   const guest = isGuestbook(floor);
-  const type: FloorType = guest ? 'guestbook' : rollFloorType(rng, floor);
+  const type: FloorType = guest ? 'guestbook' : rollFloorType(rng, floor, discovery);
   const palette = rng.int(0, PALETTES.length - 1);
   const wallpaper = rng.int(0, 3);
   const n = guest ? 7 : floorParams(floor).cells;
@@ -231,7 +247,7 @@ export function generateFloor(runSeed: string, floor: number): FloorData {
     });
 
     // ---- mannequin crowd (floor 3+) ----
-    if (floor >= 3 && rooms.length && type !== 'chatroom' && rng.chance(0.6)) {
+    if (floor >= 3 && !discovery && rooms.length && type !== 'chatroom' && rng.chance(0.6)) {
       let ri = 0;
       rooms.forEach((r, i) => {
         const a = (r.tx1 - r.tx0 + 1) * (r.tz1 - r.tz0 + 1), b = (rooms[ri].tx1 - rooms[ri].tx0 + 1) * (rooms[ri].tz1 - rooms[ri].tz0 + 1);
@@ -271,12 +287,12 @@ export function generateFloor(runSeed: string, floor: number): FloorData {
       const p = nextLoose(); if (!p) break;
       items.push(mk(`i${i}`, 'item', p, rng.pick(FLOOR_ITEMS)));
     }
-    const gifCount = rng.int(1, 3) + (type === 'geocities' ? 2 : 0);
+    const gifCount = rng.int(1, 3) + (type === 'geocities' || discovery ? 2 : 0);
     for (let i = 0; i < gifCount; i++) {
       const p = nextLoose(); if (!p) break;
       gifs.push(mk(`g${i}`, 'gif', p));
     }
-    const anCount = rng.int(1, 3);
+    const anCount = discovery ? rng.int(3, 5) : rng.int(1, 3);
     for (let i = 0; i < anCount; i++) {
       const p = nextLoose(); if (!p) break;
       anomalies.push(mk(`a${i}`, 'anomaly', p, rng.pick(ANOMALIES).id, 0.15));

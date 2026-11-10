@@ -5,10 +5,10 @@ import {
   FloorParams, GameState, Grid, ITEMS, InteractMsg, ItemId, JoinOptions, LobbyMsg, LobbyOptions, MAX_PLAYERS, MONSTER_BY_ID,
   MSnap, NPC_LINES, MIMIC_LINES, OverMsg, PLAYER, PSnap, PosMsg, RULES, S, ST_ALIVE, ST_DOWNED, ST_GHOST, TICK_HZ, SNAP_HZ, TILE,
   UseMsg, VENDOR_STOCK, bfsDist, centerOf, dist, floorParams, generateFloor, isGuestbook, playerLook, priceMultiplier,
-  randomSeedCode, solidAt, tileOf, DIRECTOR, hashString,
+  randomSeedCode, solidAt, tileOf, DIRECTOR, hashString, SODA,
 } from '@webmaze/shared';
 import {
-  Mannequin, Mimic, Mob, PlayerRT, Rat, ST_HUNT, Silhouette, World,
+  Mannequin, Mimic, Mob, PlayerRT, Rat, ST_HUNT, ST_RETREAT, Silhouette, World,
 } from './ai';
 import { ARM_FIST, ARM_IDLE, ARM_OFFER, ARM_RETRACT, Arm, tentPosition } from './vendor';
 import type { Db } from './db';
@@ -74,8 +74,14 @@ export class GameRoom extends Room<any> implements World {
   debugFloor = 0;
   discovered404 = false;
   discoveredPopup = false;
+  /** the Konami secret room is showing instead of the numbered floor */
+  secret = false;
 
   rnd(): number { return Math.random(); }
+  /** no monsters at all: discovery mode */
+  private get peaceful(): boolean { return this.opts.discovery; }
+  /** safe floor with the vendor: guestbook floors and the secret room */
+  private get safeFloor(): boolean { return this.secret || isGuestbook(this.floorNum); }
   alive(): PlayerRT[] { return this.players.filter((p) => p.st === ST_ALIVE && p.transitUntil === 0 && !p.disconnected); }
 
   // ------------------------------------------------------------------ lifecycle
@@ -103,6 +109,7 @@ export class GameRoom extends Room<any> implements World {
     this.onMessage(C.rewind, (c, m: { x: number; z: number }) => this.onRewind(c, m));
     this.onMessage(C.ping, (c, m: { x: number; z: number }) => this.onPing(c, m));
     this.onMessage(C.say, (c, m: { text: string }) => this.onSay(c, m));
+    this.onMessage(C.secret, (c) => this.onSecret(c));
     this.setSimulationInterval((ms) => this.tick(ms / 1000), 1000 / TICK_HZ);
   }
 
@@ -182,6 +189,7 @@ export class GameRoom extends Room<any> implements World {
     if (c.sessionId !== this.hostId || this.started) return;
     if (typeof m?.sharedWallet === 'boolean') this.opts.sharedWallet = m.sharedWallet;
     if (typeof m?.openMic === 'boolean') this.opts.openMic = m.openMic;
+    if (typeof m?.discovery === 'boolean') this.opts.discovery = m.discovery;
     this.sendLobby();
   }
 
@@ -205,13 +213,14 @@ export class GameRoom extends Room<any> implements World {
   // ------------------------------------------------------------------ bits
 
   private cost(item: ItemId): number {
+    if (this.secret) return 0; // the secret room's vendor gives everything away
     return Math.round(ITEMS[item].cost * priceMultiplier(this.floorNum));
   }
   private balance(p: PlayerRT): number {
     return this.opts.sharedWallet ? this.pool : this.wallets[p.id] ?? 0;
   }
   private earn(p: PlayerRT | null, amount: number, why: string): void {
-    if (amount <= 0) return;
+    if (amount <= 0 || this.secret) return; // nothing in the secret room counts toward the score
     this.totalBits += amount;
     if (this.opts.sharedWallet) this.pool += amount;
     else if (p) this.wallets[p.id] = (this.wallets[p.id] ?? 0) + amount;
@@ -239,21 +248,21 @@ export class GameRoom extends Room<any> implements World {
   }
 
   private floorMsg(p: PlayerRT): FloorMsg {
-    return { floor: this.floorNum, seed: this.seed, wakeIn: this.awake || !Number.isFinite(this.wakeAt) ? 0 : Math.max(0, this.wakeAt - this.now), spawn: { x: p.x, z: p.z } };
+    return { floor: this.floorNum, seed: this.seed, discovery: this.peaceful, secret: this.secret, spawn: { x: p.x, z: p.z } };
   }
 
   private startFloor(n: number): void {
     this.floorNum = n;
-    this.floor = generateFloor(this.seed, n);
+    this.floor = generateFloor(this.seed, n, { discovery: this.peaceful, secret: this.secret });
     this.grid = this.floor;
     this.params = floorParams(n);
-    const guest = isGuestbook(n);
+    const guest = this.secret || isGuestbook(n);
     this.taken.clear();
     this.inserted = 0;
     this.exitOpen = guest;
     this.exitHold = 0;
     this.awake = false;
-    this.wakeAt = guest || NO_MONSTERS ? Infinity : this.now + (WAKE_OVERRIDE > 0 ? WAKE_OVERRIDE : this.params.wakeDelay);
+    this.wakeAt = guest || NO_MONSTERS || this.peaceful ? Infinity : this.now + (WAKE_OVERRIDE > 0 ? WAKE_OVERRIDE : this.params.wakeDelay);
     this.mobs = [];
     this.radios = [];
     this.noises = [];
@@ -279,8 +288,8 @@ export class GameRoom extends Room<any> implements World {
 
     if (guest) {
       this.unlock();
-      // 5% interest on unspent bits
-      if (this.opts.sharedWallet) { const b = Math.floor(this.pool * RULES.interest); if (b > 0) { this.pool += b; this.totalBits += b; this.broadcast(S.ev, { k: 'bits', delta: b, why: 'interest' } satisfies EvMsg); } }
+      // 5% interest on unspent bits (not in the secret room, or it could be farmed)
+      if (this.secret) { /* no interest */ } else if (this.opts.sharedWallet) { const b = Math.floor(this.pool * RULES.interest); if (b > 0) { this.pool += b; this.totalBits += b; this.broadcast(S.ev, { k: 'bits', delta: b, why: 'interest' } satisfies EvMsg); } }
       else for (const p of this.players) { const b = Math.floor((this.wallets[p.id] ?? 0) * RULES.interest); if (b > 0) { this.wallets[p.id] += b; this.totalBits += b; this.clients.getById(p.id)?.send(S.ev, { k: 'bits', delta: b, why: 'interest' } satisfies EvMsg); } }
       const tent = tentPosition(this.floor.vendor!);
       const cheap: ItemId[] = ['battery', 'glowsticks', 'radio'];
@@ -290,6 +299,9 @@ export class GameRoom extends Room<any> implements World {
         arm.offer(cheap[Math.floor(Math.random() * cheap.length)], null);
         this.arms.set(p.id, arm);
       }
+      if (this.secret) this.spawnExhibits();
+    } else if (this.peaceful) {
+      this.lock();
     } else {
       this.lock();
       const fl = this.floor;
@@ -317,6 +329,13 @@ export class GameRoom extends Room<any> implements World {
   }
 
   private advance(): void {
+    if (this.secret) {
+      // leaving the secret room: back to the floor we left (fresh copy)
+      this.secret = false;
+      this.emit({ k: 'text', text: 'Back to the maze. That never happened.' });
+      this.startFloor(this.floorNum);
+      return;
+    }
     const noneDowned = !this.players.some((p) => p.downedThisFloor);
     if (noneDowned && !isGuestbook(this.floorNum)) {
       this.earn(null, RULES.clearNoDownBonus, 'clean floor');
@@ -338,7 +357,7 @@ export class GameRoom extends Room<any> implements World {
     this.broadcast(S.over, msg);
     this.gsDirty = true;
     const db = GameRoom.db;
-    if (db) {
+    if (db && !this.peaceful) {
       try {
         const names = this.players.map((p) => p.name).join(', ').slice(0, 60);
         const host = this.players.find((p) => p.id === this.hostId) ?? this.players[0];
@@ -546,7 +565,7 @@ export class GameRoom extends Room<any> implements World {
 
   private onOrder(c: Client, m: BuyMsg): void {
     const p = this.playerOf(c);
-    if (!p || p.st !== ST_ALIVE || !isGuestbook(this.floorNum) || !this.floor.vendor) return;
+    if (!p || p.st !== ST_ALIVE || !this.safeFloor || !this.floor.vendor) return;
     const item = m?.item;
     if (!item || !VENDOR_STOCK.includes(item)) return;
     const arm = this.arms.get(p.id);
@@ -583,7 +602,7 @@ export class GameRoom extends Room<any> implements World {
       case 'softshoes': p.passives.shoes = true; break;
       case 'scannerrange': p.passives.scanner = true; break;
       case 'floortip': {
-        const nf = generateFloor(this.seed, this.floorNum + 1);
+        const nf = generateFloor(this.seed, this.floorNum + 1, { discovery: this.peaceful });
         this.clients.getById(p.id)?.send(S.ev, { k: 'tip', text: `Next floor: ${FLOOR_TYPE_BY_ID[nf.type].name}`, floorType: nf.type } satisfies EvMsg);
         break;
       }
@@ -623,6 +642,10 @@ export class GameRoom extends Room<any> implements World {
         p.glow--;
         if (p.glow <= 0) p.inv[slot] = null;
         break;
+      case 'soda':
+        if (!this.popSoda(p)) { this.toast(p, 'Nothing close enough to push. Save the soda.'); return; }
+        p.inv[slot] = null;
+        break;
       case 'radio':
         this.radios.push({ x: p.x, z: p.z, until: this.now + 10 });
         this.emit({ k: 'radio', x: p.x, z: p.z });
@@ -631,6 +654,65 @@ export class GameRoom extends Room<any> implements World {
       default: return; // ctrlz is used through its own message
     }
     this.sendInv(p);
+  }
+
+  /** Pop the can: every monster within range is shoved back along the corridor and frozen for a few seconds. */
+  private popSoda(p: PlayerRT): boolean {
+    const victims = this.mobs.filter((m) => m.kind !== 'rat' && dist(m.x, m.z, p.x, p.z) <= SODA.range);
+    if (!victims.length) return false;
+    const dists = bfsDist(this.grid, tileOf(p.x), tileOf(p.z));
+    for (const m of victims) {
+      this.shove(m, dists);
+      m.stunUntil = this.now + SODA.stun;
+      if (m instanceof Silhouette) m.retreat(this, SODA.retreat);
+      else if (m instanceof Mimic) m.scare(this);
+    }
+    this.emit({ k: 'soda', x: p.x, z: p.z, by: p.id });
+    return true;
+  }
+
+  /** Walk a monster up to SODA.pushTiles tiles down the corridor, always to a tile farther from the player. */
+  private shove(m: Mob, dists: Int32Array): void {
+    const cols = this.grid.cols;
+    let tx = tileOf(m.x), tz = tileOf(m.z);
+    for (let i = 0; i < SODA.pushTiles; i++) {
+      const here = dists[tz * cols + tx];
+      let best = -1, bx = tx, bz = tz;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = tx + dx, nz = tz + dz;
+        if (nx < 0 || nz < 0 || nx >= cols || nz >= this.grid.rows) continue;
+        const d = dists[nz * cols + nx];
+        if (d > here && d > best) { best = d; bx = nx; bz = nz; }
+      }
+      if (best < 0) break; // dead end: it just gets stunned
+      tx = bx; tz = bz;
+    }
+    m.x = centerOf(tx); m.z = centerOf(tz);
+    m.path = [];
+    if (m.state === ST_HUNT) m.state = ST_RETREAT;
+  }
+
+  /** The Konami code: everyone drops into the secret room. */
+  private onSecret(c: Client): void {
+    const p = this.playerOf(c);
+    if (!p || !this.started || this.over || this.secret || p.st !== ST_ALIVE || p.transitUntil > 0) return;
+    this.secret = true;
+    this.emit({ k: 'text', text: `${p.name} entered the Konami code…` });
+    this.startFloor(this.floorNum);
+  }
+
+  /** Secret room: one of each monster, standing there like a museum piece. They are never updated, so they never act. */
+  private spawnExhibits(): void {
+    const lookFrom = this.players.find((q) => q.st === ST_ALIVE)?.id ?? this.players[0]?.id ?? '';
+    for (const [i, ex] of (this.floor.exhibits ?? []).entries()) {
+      switch (ex.kind) {
+        case 'silhouette': this.mobs.push(new Silhouette(`s${i}`, ex.x, ex.z)); break;
+        case 'rat': this.mobs.push(new Rat(`r${i}`, ex.x, ex.z)); break;
+        case 'mannequin': this.mobs.push(new Mannequin(`m${i}`, ex.x, ex.z)); break;
+        case 'mimic': this.mobs.push(new Mimic(`x${i}`, ex.x, ex.z, lookFrom)); break;
+        default:
+      }
+    }
   }
 
   private onRewind(c: Client, m: { x: number; z: number }): void {
@@ -679,18 +761,21 @@ export class GameRoom extends Room<any> implements World {
     if (!this.started || this.over) return;
 
     this.updatePlayers(dt);
-    const guest = isGuestbook(this.floorNum);
+    const guest = this.safeFloor;
 
-    if (!guest) {
+    if (!guest && this.peaceful) {
+      this.radios = this.radios.filter((r) => r.until > this.now);
+    } else if (!guest) {
       if (!this.awake && this.now >= this.wakeAt) {
         this.awake = true;
+        this.gsDirty = true;
         this.emit({ k: 'wake' });
         this.emit({ k: 'stinger', which: 'bell' });
       }
       this.radios = this.radios.filter((r) => r.until > this.now);
       this.noises = this.noises.filter((r) => r.until > this.now);
       for (const m of this.mobs) {
-        if (m.kind === 'rat' || this.awake) m.update(this, dt);
+        if ((m.kind === 'rat' || this.awake) && m.stunUntil <= this.now) m.update(this, dt);
       }
       this.popups(dt);
       this.erase404(dt);
@@ -897,14 +982,14 @@ export class GameRoom extends Room<any> implements World {
     }
     const m: MSnap[] = [];
     for (const mob of this.mobs) {
-      if (!(mob.kind === 'rat' || this.awake)) continue;
+      if (!(this.secret || mob.kind === 'rat' || this.awake)) continue;
       m.push({ i: mob.id, k: mob.kind, x: r2(mob.x), z: r2(mob.z), r: r2(mob.yaw), s: mob.state, c: mob.copy });
     }
     const a: ASnap[] = [];
     for (const arm of this.arms.values()) if (arm.state !== ARM_IDLE) a.push(arm.snap());
     this.broadcast(S.snap, {
       t: Math.round(this.now * 1000), p, m, a, tn: Math.round(this.tension),
-      xp: r2(this.exitHold / RULES.exitHold), wk: this.awake || !Number.isFinite(this.wakeAt) ? 0 : Math.max(0, Math.ceil(this.wakeAt - this.now)),
+      xp: r2(this.exitHold / RULES.exitHold),
     });
   }
 }

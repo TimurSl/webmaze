@@ -835,6 +835,11 @@ export function iconTexture(kind: string): THREE.CanvasTexture {
     case 'battery': R(6, 10, 20, 16, '#ffc800'); R(8, 12, 16, 12, '#222'); R(11, 6, 4, 4, '#ccc'); R(17, 6, 4, 4, '#ccc'); R(13, 14, 6, 8, '#ffc800'); break;
     case 'glowsticks': for (let i = 0; i < 3; i++) { ctx.save(); ctx.translate(16, 16); ctx.rotate(-0.5 + i * 0.5); R(-2, -13, 4, 26, ['#40ff60', '#ff40d0', '#40d8ff'][i]); ctx.restore(); } break;
     case 'radio': R(3, 10, 26, 16, '#6a4a2a'); R(6, 13, 12, 10, '#222'); ctx.fillStyle = '#c0c0c0'; ctx.beginPath(); ctx.arc(23, 18, 4, 0, 7); ctx.fill(); R(20, 2, 2, 8, '#ccc'); break;
+    case 'soda':
+      R(9, 7, 14, 21, '#d01828'); R(9, 13, 14, 7, '#f4f4f4'); R(11, 15, 10, 3, '#d01828'); R(9, 5, 14, 3, '#b8b8c0'); R(13, 3, 6, 3, '#d8d8e0');
+      R(21, 2, 5, 3, '#40d8ff'); R(24, 6, 2, 2, '#40d8ff'); R(6, 4, 2, 2, '#40d8ff');
+      break;
+    case 'ctrlz': R(3, 3, 26, 26, '#2a3a8a'); R(6, 6, 20, 20, '#e8e8f0'); ctx.strokeStyle = '#2a3a8a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(16, 17, 6, Math.PI * 1.1, Math.PI * 2.7); ctx.stroke(); R(7, 9, 7, 3, '#2a3a8a'); break;
     case 'gif': {
       const cols = ['#ff30a0', '#30ff60', '#30c0ff', '#ffe030'];
       for (let i = 0; i < 4; i++) { ctx.fillStyle = cols[i]; ctx.save(); ctx.translate(16, 16); ctx.rotate(i * 0.8); ctx.fillRect(-12, -3, 24, 6); ctx.restore(); }
