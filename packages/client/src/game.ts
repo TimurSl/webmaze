@@ -82,6 +82,11 @@ export class Game {
     this.gl = new PixelRenderer(canvas);
     this.loadBookmarks();
     canvas.addEventListener('pointerdown', () => { if (this.myState === ST_GHOST) this.specIdx++; });
+    // The browser let go of the mouse by itself (Esc, alt-tab, focus loss) while the player was in the 3D view:
+    // pause, as they asked for the cursor back. Without this the run carried on with a dead camera.
+    input.onLockLost = () => {
+      if (this.playing && !this.over && !this.ui.blocking && !input.touch) this.openPause();
+    };
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -164,7 +169,6 @@ export class Game {
     this.ui.toast(`Floor ${m.floor}: ${FLOOR_TYPE_BY_ID[this.floor.type].name}`);
     this.view.setExitOpen(this.floor.type === 'guestbook');
     if (this.gs) this.view.setTakenIds(this.taken);
-    if (!this.input.touch && !this.input.locked) this.ui.toast('Click the game to capture the mouse');
   }
 
   onSnap(s: Snap): void {
@@ -345,7 +349,7 @@ export class Game {
     this.clock += dt;
     this.ui.tick(dt);
     if (this.playing && this.floor && this.view && !this.over) this.update(dt);
-    else this.input.takeLook(); // don't let mouse movement pile up while menus/lobby are showing
+    else { this.input.takeLook(); this.input.wantLock = false; } // don't let mouse movement pile up while menus/lobby are showing
     this.gl.render(this.clock);
   }
 
@@ -488,6 +492,12 @@ export class Game {
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.4);
     this.gl.fx.flash = this.hurtFlash * 0.7;
     this.ui.setFx(st === ST_DOWNED ? 0.6 + Math.sin(this.clock * 6) * 0.2 : this.hurtFlash * 0.6);
+
+    // ---- mouse capture ----
+    // Last, so a window opened by this frame's keys already counts. Re-captures the mouse after a window closes.
+    input.wantLock = !this.ui.blocking;
+    input.maintainLock();
+    this.ui.setLockHint(input.needsClick);
   }
 
   private toggleMap(): void {
