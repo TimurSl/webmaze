@@ -46,6 +46,41 @@ const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;',
 
 export interface Bookmarks { monster: string[]; anomaly: string[]; npc: string[] }
 
+export interface PauseSettings {
+  sensitivity: number;
+  raw: boolean;
+  setSensitivity(v: number): void;
+  setRaw(on: boolean): void;
+}
+
+/** Pixel-art glyphs drawn as crisp SVG rects, like the 16-colour originals. */
+const pix = (rows: string[], color = '#000'): string => {
+  let r = '';
+  rows.forEach((line, y) => { for (let x = 0; x < line.length; x++) if (line[x] === '#') r += `<rect x="${x}" y="${y}" width="1" height="1"/>`; });
+  return `<svg width="${rows[0].length}" height="${rows.length}" viewBox="0 0 ${rows[0].length} ${rows.length}" fill="${color}" shape-rendering="crispEdges" aria-hidden="true">${r}</svg>`;
+};
+const X_GLYPH = pix(['##....##', '.##..##.', '..####..', '...##...', '..####..', '.##..##.', '##....##']);
+const mazeIcon = (size: number): string =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><rect width="16" height="16" fill="#0a0a30"/><path d="M2 2h12v12H2z M4 4v8h2V6h4v4H8v2h4V4z" fill="#ffe030" fill-rule="evenodd"/></svg>`;
+
+/** A Windows-95 style window. `close` adds a working title-bar close button (wired with [data-close]). */
+const win = (title: string, body: string, o: { cls?: string; close?: boolean; icon?: boolean; status?: string[] } = {}): string =>
+  `<div class="win ${o.cls ?? ''}"><div class="title"><span class="tt">${o.icon ? mazeIcon(14) : ''}${title}</span>` +
+  `<span class="ctl">${o.close ? `<button data-close aria-label="Close" title="Close">${X_GLYPH}</button>` : ''}</span></div>` +
+  `<div class="wb">${body}</div>${o.status ? `<div class="status">${o.status.map((t, i) => `<span${i ? ' class="fit"' : ''}>${t}</span>`).join('')}</div>` : ''}</div>`;
+
+const CONTROLS = `<dl class="keys">
+  <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Move (Shift sprint, C crouch)</dd>
+  <dt>Mouse</dt><dd>Look. Click the game to capture the mouse, Esc to pause</dd>
+  <dt><kbd>E</kbd></dt><dd>Interact (hold to revive a teammate)</dd>
+  <dt><kbd>F</kbd> <kbd>Q</kbd> <kbd>R</kbd></dt><dd>Flashlight · webcam (reveals hidden things) · scanner</dd>
+  <dt><kbd>M</kbd> <kbd>Tab</kbd> <kbd>B</kbd></dt><dd>Map · bookmarks · vendor (on safe floors)</dd>
+  <dt><kbd>1</kbd>–<kbd>4</kbd> <kbd>Z</kbd></dt><dd>Use item · Ctrl+Z rewind</dd>
+  <dt><kbd>G</kbd> <kbd>V</kbd> <kbd>Enter</kbd></dt><dd>Ping · push to talk · chat</dd>
+  <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Look sensitivity (also in the pause menu)</dd>
+  <dt>Phone</dt><dd>Left stick to move, drag to look, buttons on the right</dd>
+</dl>`;
+
 export class UI {
   private menu: HTMLElement;
   private lobby: HTMLElement;
@@ -54,6 +89,7 @@ export class UI {
   private overlay: HTMLElement;
   private dlg: HTMLElement;
   private popupEl: HTMLElement;
+  private taskbar: HTMLElement;
   private toastsEl!: HTMLElement;
   private pingsEl!: HTMLElement;
   private last = new Map<string, string>();
@@ -72,8 +108,18 @@ export class UI {
     this.overlay = mk('overlay', 'overlay hidden');
     this.dlg = mk('dialogue', 'hidden');
     this.popupEl = mk('popup', 'hidden');
+    this.taskbar = mk('taskbar', 'taskbar hidden');
+    this.taskbar.innerHTML = `<button class="start" tabindex="-1">${mazeIcon(16)}Webmaze</button><span class="sep"></span><button class="task" tabindex="-1"></button><span class="tray" id="tb-clock"></span>`;
+    const clock = (): void => { const el = this.taskbar.querySelector('#tb-clock'); if (el) el.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+    clock(); setInterval(clock, 15000);
     this.buildHud();
-    this.popupEl.innerHTML = '<div class="tb"><span>CONGRATULATIONS!!!</span><span>x</span></div><div class="bd">YOU ARE THE 1,000,000th VISITOR!!!<br><small>(click to claim)</small></div>';
+    this.popupEl.innerHTML = win('CONGRATULATIONS!!!', '<div class="bd">YOU ARE THE 1,000,000th VISITOR!!!<br><small>(click to claim)</small></div>', { close: true });
+  }
+
+  private showTaskbar(title: string | null): void {
+    this.taskbar.classList.toggle('hidden', title === null);
+    const t = this.taskbar.querySelector('.task');
+    if (t && title !== null) t.textContent = title;
   }
 
   // ------------------------------------------------------------------ menu
@@ -84,37 +130,54 @@ export class UI {
     const rows = board.length
       ? board.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${r.floor}</td><td>${r.bits}</td><td>${esc(r.seed)}</td></tr>`).join('')
       : '<tr><td colspan="5">No runs recorded yet. Be the first to get lost.</td></tr>';
-    this.menu.innerHTML = `
-      <h1 class="logo">WEBMAZE</h1>
-      <div class="marquee"><span>~*~ Welcome to my homepage!! ~*~ 1-6 players ~*~ Find 3 floppy disks, find the link, go deeper ~*~ Best viewed with the lights off ~*~ Please sign the guestbook ~*~</span></div>
-      <div class="panel"><h3>Play</h3><div class="body">
-        <div class="row">
-          <label class="f">Your name<input id="m-name" type="text" maxlength="16" value="${esc(account?.name ?? saved.name)}" ${account ? 'disabled' : ''} /></label>
-          <label class="f">Seed (optional, to replay a world)<input id="m-seed" type="text" maxlength="16" placeholder="random" /></label>
-        </div>
-        <div class="row">
-          <button class="big" id="b-solo">Solo run</button>
-          <button class="big pink" id="b-create">Create room</button>
-        </div>
-        <div class="row">
-          <label class="f">Room code<input id="m-code" type="text" maxlength="6" placeholder="ABCDEF" style="text-transform:uppercase" /></label>
-          <button id="b-join">Join room</button>
-        </div>
-        <div class="err" id="m-err">${esc(err)}</div>
-      </div></div>
-      <div class="panel"><h3>Account (keeps your Bookmarks between runs)</h3><div class="body">
-        ${account
-          ? `<div class="row">Signed in as <b>${esc(account.name)}</b> <button id="b-logout">Sign out</button></div>`
-          : `<div class="row"><label class="f">Name<input id="a-name" type="text" maxlength="20" autocomplete="username"/></label><label class="f">Password<input id="a-pw" type="password" autocomplete="current-password"/></label></div>
-             <div class="row"><button id="b-login">Sign in</button><button id="b-reg">Create account</button><span class="smallnote">Optional. Guests keep Bookmarks in this browser only.</span></div><div class="err" id="a-err"></div>`}
-      </div></div>
-      <div class="panel"><h3>How to play</h3><div class="body smallnote">
-        WASD move · Shift sprint · C crouch · E interact (hold to revive) · F flashlight · Q webcam (reveals hidden things) · R scanner · M map · Tab bookmarks · B vendor menu on safe floors · 1-4 use item · Z Ctrl+Z · G ping · V push to talk · Enter chat · [ ] look sensitivity. On a phone: left stick to move, drag to look, buttons on the right.<br>
-        Never fight. Walking is quieter than running. Listen to the music: when it thins out, something is near.
-      </div></div>
-      <div class="panel"><h3>Deepest runs</h3><div class="body"><table class="lb"><tr><th>#</th><th>Team</th><th>Floor</th><th>Bits</th><th>Seed</th></tr>${rows}</table></div></div>
-      <div class="under">~ UNDER CONSTRUCTION ~</div>
-      <div class="counter">You are visitor number <b>000042</b></div>`;
+    this.menu.innerHTML = `<div class="desk">${win('Webmaze', `
+      <div class="banner">${mazeIcon(40)}<div><h1>WEBMAZE</h1><p>1–6 players. Find 3 floppy disks, find the link, go deeper.</p></div></div>
+      <div class="tabs" role="tablist">
+        <button class="sel" data-tab="play">Play</button><button data-tab="acct">Account</button><button data-tab="help">Controls</button><button data-tab="lb">High scores</button>
+      </div>
+      <div class="sheet">
+        <section class="on" data-sec="play">
+          <fieldset><legend>Player</legend>
+            <div class="row">
+              <label class="field">Your name:<input id="m-name" type="text" maxlength="16" value="${esc(account?.name ?? saved.name)}" ${account ? 'disabled' : ''} /></label>
+              <label class="field">Seed (optional, replays a world):<input id="m-seed" type="text" maxlength="16" placeholder="random" /></label>
+            </div>
+          </fieldset>
+          <fieldset><legend>New game</legend>
+            <div class="row"><button class="default" id="b-solo">Solo run</button><button id="b-create">Create room</button><span class="note">A room gets a code friends can join.</span></div>
+          </fieldset>
+          <fieldset><legend>Join a friend</legend>
+            <div class="row"><label class="field">Room code:<input id="m-code" type="text" maxlength="6" placeholder="ABCDEF" style="text-transform:uppercase" /></label><button id="b-join" style="align-self:flex-end">Join</button></div>
+          </fieldset>
+          <div class="err" id="m-err">${esc(err)}</div>
+        </section>
+        <section data-sec="acct">
+          <fieldset><legend>Account</legend>
+          ${account
+            ? `<div class="row">Signed in as <b>${esc(account.name)}</b>.</div><div class="row end"><button id="b-logout">Sign out</button></div>`
+            : `<p class="note" style="margin-top:0">Optional. An account keeps your Bookmarks between runs and devices; guests keep them in this browser only.</p>
+               <div class="row"><label class="field">User name:<input id="a-name" type="text" maxlength="20" autocomplete="username"/></label></div>
+               <div class="row"><label class="field">Password:<input id="a-pw" type="password" autocomplete="current-password"/></label></div>
+               <div class="err" id="a-err"></div>
+               <div class="row end"><button class="default" id="b-login">Sign in</button><button id="b-reg">Create account</button></div>`}
+          </fieldset>
+        </section>
+        <section data-sec="help">
+          ${CONTROLS}
+          <hr class="etch">
+          <div class="note">Never fight. Walking is quieter than running. Listen to the music: when it thins out, something is near.</div>
+        </section>
+        <section data-sec="lb">
+          <div class="lbwrap"><table class="lb"><tr><th>#</th><th>Team</th><th>Floor</th><th>Bits</th><th>Seed</th></tr>${rows}</table></div>
+        </section>
+      </div>`, { icon: true, status: ['Ready', 'Visitor #000042'] })}</div>`;
+    this.showTaskbar('Webmaze');
+    const tabs = this.menu.querySelectorAll<HTMLButtonElement>('[data-tab]');
+    const showTab = (name: string): void => {
+      tabs.forEach((t) => t.classList.toggle('sel', t.dataset.tab === name));
+      this.menu.querySelectorAll<HTMLElement>('[data-sec]').forEach((sec) => sec.classList.toggle('on', sec.dataset.sec === name));
+    };
+    tabs.forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab!)));
     const val = (id: string): string => (this.menu.querySelector<HTMLInputElement>(id)?.value ?? '').trim();
     const name = (): string => val('#m-name') || 'Guest';
     this.menu.querySelector('#b-solo')?.addEventListener('click', () => this.h.solo(name(), val('#m-seed')));
@@ -140,27 +203,28 @@ export class UI {
     this.hud.classList.add('hidden');
     const me = m.players.find((p) => p.id === m.youId);
     const host = !!me?.host;
-    this.lobby.innerHTML = `
-      <h1 class="logo" style="font-size:clamp(28px,6vw,52px)">LOBBY</h1>
-      <div class="panel"><h3>Room</h3><div class="body">
-        <div class="code" id="l-code" title="click to copy the invite link">${esc(m.code)}</div>
-        <div class="smallnote" style="text-align:center">Share the code or <a href="#" id="l-link">copy the invite link</a>. Seed: <b>${esc(m.seed)}</b> (friends can replay this exact world)</div>
-      </div></div>
-      <div class="panel"><h3>Players (${m.players.length}/6)</h3><div class="body"><div class="players" id="l-players"></div>
-        <div class="row" style="justify-content:center"><button id="l-reroll">Reroll my look</button></div>
-      </div></div>
-      <div class="panel"><h3>Options ${host ? '' : '(host only)'}</h3><div class="body">
-        <label><input type="checkbox" id="o-shared" ${m.opts.sharedWallet ? 'checked' : ''} ${host ? '' : 'disabled'}/> Shared wallet (one pool of bits for everyone)</label><br>
-        <label><input type="checkbox" id="o-mic" ${m.opts.openMic ? 'checked' : ''} ${host ? '' : 'disabled'}/> Open mic (otherwise push-to-talk with V)</label>
-      </div></div>
-      <div class="row" style="justify-content:center">
-        <button class="big pink" id="l-start" ${host ? '' : 'disabled'}>${host ? 'Start run' : 'Waiting for host…'}</button>
+    this.lobby.innerHTML = `<div class="desk">${win(`Lobby - Room ${esc(m.code)}`, `
+      <fieldset><legend>Invite</legend>
+        <div class="codebox"><div class="code" id="l-code" title="Click to copy the invite link">${esc(m.code)}</div><button id="l-link">Copy link</button></div>
+        <div class="note" style="margin-top:6px">Seed <b>${esc(m.seed)}</b>. Friends can enter it on the menu to replay this exact world.</div>
+      </fieldset>
+      <fieldset><legend>Players (${m.players.length}/6)</legend>
+        <div class="players" id="l-players"></div>
+        <div class="row end"><button id="l-reroll">Reroll my look</button></div>
+      </fieldset>
+      <fieldset><legend>Options${host ? '' : ' (host only)'}</legend>
+        <label class="chk"><input type="checkbox" id="o-shared" ${m.opts.sharedWallet ? 'checked' : ''} ${host ? '' : 'disabled'}/>Shared wallet (one pool of bits for everyone)</label>
+        <label class="chk"><input type="checkbox" id="o-mic" ${m.opts.openMic ? 'checked' : ''} ${host ? '' : 'disabled'}/>Open mic (otherwise push-to-talk with V)</label>
+      </fieldset>
+      <div class="row end">
+        <button class="default" id="l-start" ${host ? '' : 'disabled'}>${host ? 'Start run' : 'Waiting for host…'}</button>
         <button id="l-leave">Leave</button>
-      </div>`;
+      </div>`, { icon: true, status: [host ? 'You are the host.' : 'Waiting for the host to start.', `${m.players.length} connected`] })}</div>`;
+    this.showTaskbar(`Lobby - ${m.code}`);
     const list = this.lobby.querySelector('#l-players')!;
     for (const p of m.players) {
       const card = document.createElement('div');
-      card.className = 'pcard';
+      card.className = p.id === m.youId ? 'pcard me' : 'pcard';
       card.appendChild(lookPortrait(p.look, 100));
       const n = document.createElement('div'); n.className = 'nm'; n.textContent = p.name + (p.id === m.youId ? ' (you)' : '');
       card.appendChild(n);
@@ -179,7 +243,7 @@ export class UI {
   }
 
   hideAll(): void {
-    for (const e of [this.menu, this.lobby, this.hud, this.over, this.overlay, this.dlg, this.popupEl]) e.classList.add('hidden');
+    for (const e of [this.menu, this.lobby, this.hud, this.over, this.overlay, this.dlg, this.popupEl, this.taskbar]) e.classList.add('hidden');
     this.overlayKind = null; this.dialogueOpen = false;
   }
 
@@ -187,13 +251,13 @@ export class UI {
 
   private buildHud(): void {
     this.hud.innerHTML = `
-      <div class="tl"><div id="h-floor"></div><div id="h-bits"></div><div id="h-type" style="font-size:12px;opacity:.8"></div></div>
+      <div class="tl hpanel"><div id="h-floor"></div><div id="h-bits"></div><div id="h-type" class="dim"></div></div>
       <div class="tc"><div id="h-disks"></div><div id="h-wake"></div></div>
-      <div class="tr" id="h-team"></div>
-      <div class="bl"><div class="bar"><i id="h-stam"></i></div><div class="bar bat"><i id="h-bat"></i></div><div id="h-bat-t" style="font-size:11px"></div></div>
-      <div class="bc" id="h-slots"></div>
+      <div class="tr hpanel" id="h-team"></div>
+      <div class="bl hpanel"><div class="lbl">Stamina</div><div class="prog"><i id="h-stam"></i></div><div class="lbl">Battery</div><div class="prog"><i id="h-bat"></i></div><div id="h-bat-t" class="dim" style="margin-top:2px"></div></div>
+      <div class="bc hpanel" id="h-slots"></div>
       <div class="crosshair" id="h-cross"></div>
-      <div class="prompt hidden" id="h-prompt"></div>
+      <div class="prompt tip hidden" id="h-prompt"></div>
       <div class="toasts" id="h-toasts"></div>
       <div class="pings" id="h-pings"></div>
       <div class="center" id="h-center"></div>`;
@@ -204,6 +268,7 @@ export class UI {
   showHud(): void {
     this.menu.classList.add('hidden'); this.lobby.classList.add('hidden'); this.over.classList.add('hidden');
     this.hud.classList.remove('hidden');
+    this.showTaskbar(null);
   }
 
   private set(id: string, html: string): void {
@@ -214,20 +279,23 @@ export class UI {
   }
 
   setHud(s: HudState): void {
-    this.set('h-floor', `FLOOR ${s.floor}${s.guest ? ' · GUESTBOOK' : ''}`);
+    this.set('h-floor', `Floor ${s.floor}${s.guest ? ' · Guestbook' : ''}`);
     this.set('h-bits', `◆ ${s.bits} bits${s.shared ? ' (shared)' : ''}`);
     this.set('h-type', s.type);
-    this.set('h-disks', s.guest ? 'Safe floor. Shop (B) then find the link.' : `💾 ${s.inserted}/3 inserted${s.held ? ` · carrying ${s.held}` : ''}${s.exitOpen ? ' · LINK OPEN' : ''}`);
-    this.set('h-wake', s.guest || (!s.awake && s.wakeIn <= 0) ? '' : s.awake ? '<span style="color:#ff6060">IT IS AWAKE</span>' : `it wakes in ${s.wakeIn}s`);
-    this.set('h-team', s.team.map((t) => `<div class="pill ${t.st === 1 ? 'down' : t.st === 2 ? 'ghost' : ''} ${t.me ? 'me' : ''}">${t.st === 1 ? '⚠ ' : t.st === 2 ? '👻 ' : ''}${esc(t.name)}</div>`).join(''));
+    this.set('h-disks', `<div class="tip">${s.guest ? 'Safe floor. Shop (B) then find the link.' : `💾 ${s.inserted}/3 inserted${s.held ? ` · carrying ${s.held}` : ''}${s.exitOpen ? ' · <b>link open</b>' : ''}`}</div>`);
+    this.set('h-wake', s.guest || (!s.awake && s.wakeIn <= 0) ? '' : s.awake ? '<div class="tip warn">IT IS AWAKE</div>' : `<div class="tip">It wakes in ${s.wakeIn}s</div>`);
+    this.set('h-team', s.team.length > 1 ? s.team.map((t) => `<div class="member ${t.st === 1 ? 'down' : t.st === 2 ? 'ghost' : ''} ${t.me ? 'me' : ''}">${t.st === 1 ? '⚠ ' : t.st === 2 ? '👻 ' : ''}${esc(t.name)}</div>`).join('') : '');
     const stam = this.hud.querySelector<HTMLElement>('#h-stam'); if (stam) stam.style.width = `${Math.round(s.stamina * 100)}%`;
     const bat = this.hud.querySelector<HTMLElement>('#h-bat'); if (bat) bat.style.width = `${Math.min(100, Math.round((s.battery / 120) * 100))}%`;
-    this.set('h-bat-t', `🔦 ${Math.round(s.battery)}s${s.webcam ? ' · 📹 REC' : ''}${s.scanCd > 0 ? ` · scan ${Math.ceil(s.scanCd)}s` : ''}`);
+    this.set('h-bat-t', `${Math.round(s.battery)}s left${s.webcam ? ' · 📹 REC' : ''}${s.scanCd > 0 ? ` · scan ${Math.ceil(s.scanCd)}s` : ''}`);
     this.set('h-slots', s.slots.map((it, i) => `<div class="slot"><b>${i + 1}</b>${it ? ITEMS[it].icon : ''}${it === 'glowsticks' ? `<i>${s.glow || 3}</i>` : ''}</div>`).join(''));
     let center = '';
-    if (s.downed) center = `<div class="big-msg">DOWN</div><div class="bar red" style="width:220px;margin:6px auto"><i style="width:${Math.round(s.downed.bleed * 100)}%"></i></div><div>${s.downed.rv > 0 ? `being revived ${Math.round(s.downed.rv * 100)}%` : 'hold on… a teammate can revive you'}</div>`;
-    else if (s.ghost) center = '<div class="big-msg" style="font-size:28px">YOU ARE A GHOST</div><div>spectating · click / tap to switch · a teammate can buy you back at the vendor</div>';
-    else if (s.exitProgress > 0) center = `<div>everyone stay close… ${Math.round(s.exitProgress * 100)}%</div>`;
+    if (s.downed) {
+      const rv = s.downed.rv > 0;
+      center = win('You are down', `<div class="msg"><span class="ico-warn"></span><div style="flex:1">${rv ? `Being revived… ${Math.round(s.downed.rv * 100)}%` : 'Hold on. A teammate can revive you.'}
+        <div class="prog ${rv ? '' : 'red'}" style="margin-top:6px"><i style="width:${Math.round((rv ? s.downed.rv : s.downed.bleed) * 100)}%"></i></div></div></div>`);
+    } else if (s.ghost) center = win('Spectating', '<div class="msg"><span class="ico-info">i</span><div>You are a ghost. Click or tap to switch view. A teammate can buy you back at the vendor.</div></div>');
+    else if (s.exitProgress > 0) center = `<div class="tip">Everyone stay close… ${Math.round(s.exitProgress * 100)}%</div>`;
     this.set('h-center', center);
     this.hud.querySelector('#h-cross')?.classList.toggle('hidden', !!s.downed || s.ghost);
   }
@@ -242,6 +310,7 @@ export class UI {
   toast(text: string): void {
     if (this.toastsEl.children.length > 4) this.toastsEl.firstChild?.remove();
     const d = document.createElement('div');
+    d.className = 'tip';
     d.textContent = text;
     this.toastsEl.appendChild(d);
     setTimeout(() => d.remove(), 3900);
@@ -268,10 +337,11 @@ export class UI {
   openDialogue(name: string, text: string, you: Look, them: Look | null, mimic: boolean, onBlip: () => void): void {
     this.dialogueOpen = true;
     this.dlg.classList.remove('hidden');
-    this.dlg.innerHTML = `<div class="bar-t"></div><div class="por l"></div><div class="por r ${mimic ? 'mimic' : ''}"></div><div class="bar-b"><div class="line"></div></div>`;
+    this.dlg.innerHTML = `<div class="bar-t"></div><div class="por l"></div><div class="por r ${mimic ? 'mimic' : ''}"></div>` +
+      `<div class="bar-b">${win(name ? esc(name) : 'Message', '<div class="line"></div><div class="more">Click to continue</div>')}</div>`;
     this.dlg.querySelector('.por.l')!.appendChild(lookPortrait(you, 400));
     if (them) this.dlg.querySelector('.por.r')!.appendChild(lookPortrait(them, 400));
-    this.typing = { text: name ? `${name}: ${text}` : text, shown: 0, acc: 0, timer: 0, onBlip };
+    this.typing = { text, shown: 0, acc: 0, timer: 0, onBlip };
     this.dlg.onclick = () => {
       if (this.typing.shown < this.typing.text.length) this.typing.shown = this.typing.text.length;
       else this.closeDialogue();
@@ -307,10 +377,10 @@ export class UI {
   openMap(size: number): CanvasRenderingContext2D {
     this.overlayKind = 'map';
     this.overlay.classList.remove('hidden');
-    this.overlay.innerHTML = `<canvas id="mapcv" width="${size}" height="${size}"></canvas>`;
+    this.overlay.innerHTML = win('Map', `<canvas id="mapcv" width="${size}" height="${size}"></canvas>`, { cls: 'mapwin', close: true, status: ['Click anywhere or press M to close'] });
     this.overlay.onclick = () => this.closeOverlay();
     const cv = this.overlay.querySelector<HTMLCanvasElement>('#mapcv')!;
-    cv.style.width = cv.style.height = `${Math.min(innerWidth, innerHeight) * 0.88}px`;
+    cv.style.width = cv.style.height = `${Math.min(innerWidth, innerHeight) * 0.78}px`;
     this.mapCtx = cv.getContext('2d')!;
     this.mapCtx.imageSmoothingEnabled = false;
     return this.mapCtx;
@@ -323,8 +393,10 @@ export class UI {
     const mon = MONSTERS.map((m) => card(b.monster.includes(m.id), m.name, `${m.desc} Counter: ${m.counter}`)).join('');
     const an = anomalyIds.map((a) => card(b.anomaly.includes(a.id), a.name, a.desc)).join('');
     const npc = [...NPC_KINDS, 'mimic'].map((k) => card(b.npc.includes(k), k === 'hint' ? 'Helper NPC' : k === 'trade' ? 'Trader NPC' : k === 'line' ? 'Talker NPC' : 'Mimic NPC', k === 'mimic' ? 'Looks friendly. Is not.' : 'Wanders a floor and says something.')).join('');
-    this.overlay.innerHTML = `<div class="panel"><h3>Bookmarks (press Tab or tap to close)</h3><div class="body"><div class="sect">Monsters</div><div class="bm">${mon}</div><div class="sect">Anomalies</div><div class="bm">${an}</div><div class="sect">Residents</div><div class="bm">${npc}</div></div></div>`;
-    this.overlay.onclick = () => this.closeOverlay();
+    const count = (keys: string[], all: number): string => `${keys.length}/${all}`;
+    this.overlay.innerHTML = win('Bookmarks', `<fieldset><legend>Monsters</legend><div class="bm">${mon}</div></fieldset><fieldset><legend>Anomalies</legend><div class="bm">${an}</div></fieldset><fieldset><legend>Residents</legend><div class="bm">${npc}</div></fieldset>`,
+      { close: true, status: ['Press Tab to close', `Monsters ${count(b.monster, MONSTERS.length)}`, `Anomalies ${count(b.anomaly, anomalyIds.length)}`] });
+    this.wireOverlay();
   }
 
   openShop(floor: number, balance: number, ghosts: number): void {
@@ -335,41 +407,66 @@ export class UI {
       const it = ITEMS[id];
       const cost = Math.round(it.cost * mult);
       const dis = cost > balance || (id === 'ghost' && ghosts === 0);
-      return `<div class="shop-item"><div class="ic">${it.icon}</div><div class="d"><b>${esc(it.name)}</b><small>${esc(it.desc)}${id === 'ghost' ? ` (${ghosts} ghost${ghosts === 1 ? '' : 'es'})` : ''}</small></div><div>${cost}◆</div><button data-i="${id}" ${dis ? 'disabled' : ''}>Order</button></div>`;
+      return `<div class="shop-item"><div class="ic">${it.icon}</div><div class="d"><b>${esc(it.name)}</b><small>${esc(it.desc)}${id === 'ghost' ? ` (${ghosts} ghost${ghosts === 1 ? '' : 'es'})` : ''}</small></div><div class="cost">${cost} ◆</div><button data-i="${id}" ${dis ? 'disabled' : ''}>Order</button></div>`;
     }).join('');
-    this.overlay.innerHTML = `<div class="panel"><h3>The Vendor · you have ${balance}◆</h3><div class="body"><div class="smallnote">Order an item and the hand will bring it. Grab it with E when it reaches you. Do not run away from the hand.</div>${rows}<div class="row"><button id="s-close">Close (B)</button></div></div></div>`;
-    this.overlay.onclick = (e) => { if (e.target === this.overlay) this.closeOverlay(); };
+    this.overlay.innerHTML = win('The Vendor', `<p class="note" style="margin:0 0 8px">Order an item and the hand will bring it. Grab it with E when it reaches you. Do not run away from the hand.</p><div class="shoplist">${rows}</div><div class="row end" style="margin-top:8px"><button id="s-close">Close</button></div>`,
+      { close: true, status: [`You have ${balance} ◆`, 'B to close'] });
+    this.wireOverlay();
     this.overlay.querySelectorAll<HTMLButtonElement>('button[data-i]').forEach((b) => b.addEventListener('click', () => { this.h.order(b.dataset.i as ItemId); this.closeOverlay(); }));
     this.overlay.querySelector('#s-close')?.addEventListener('click', () => this.closeOverlay());
   }
 
-  openHelp(): void {
+  openHelp(set: PauseSettings): void {
     this.overlayKind = 'help';
     this.overlay.classList.remove('hidden');
-    this.overlay.innerHTML = '<div class="panel"><h3>Paused</h3><div class="body"><div class="row"><button id="p-resume">Resume</button><button id="p-leave">Leave run</button></div><div class="smallnote">Click the game view to capture the mouse again.</div></div></div>';
+    const pct = (v: number): string => `${Math.round(v * 100)}%`;
+    this.overlay.innerHTML = win('Paused', `
+      <fieldset><legend>Mouse</legend>
+        <div class="row"><span style="min-width:96px">Look sensitivity:</span><input type="range" id="p-sens" min="5" max="300" step="5" value="${Math.round(set.sensitivity * 100)}"/><span id="p-sens-v" style="min-width:38px;text-align:right">${pct(set.sensitivity)}</span></div>
+        <label class="chk"><input type="checkbox" id="p-raw" ${set.raw ? 'checked' : ''}/>Raw mouse input where supported (ignores OS pointer acceleration)</label>
+      </fieldset>
+      <fieldset><legend>Controls</legend>${CONTROLS}</fieldset>
+      <div class="row end"><button class="default" id="p-resume">Resume</button><button id="p-leave">Leave run</button></div>`,
+      { close: true, status: ['Click the game view to capture the mouse again.'] });
+    const sens = this.overlay.querySelector<HTMLInputElement>('#p-sens')!;
+    const out = this.overlay.querySelector('#p-sens-v')!;
+    sens.oninput = () => { const v = Number(sens.value) / 100; set.setSensitivity(v); out.textContent = pct(v); };
+    const raw = this.overlay.querySelector<HTMLInputElement>('#p-raw')!;
+    raw.onchange = () => set.setRaw(raw.checked);
     this.overlay.querySelector('#p-resume')?.addEventListener('click', () => this.closeOverlay());
     this.overlay.querySelector('#p-leave')?.addEventListener('click', () => { this.closeOverlay(); this.h.leave(); });
+    this.wireOverlay();
+  }
+
+  /** Title-bar close buttons, and clicking the dimmed backdrop, close the current overlay window. */
+  private wireOverlay(): void {
+    this.overlay.onclick = (e) => { if (e.target === this.overlay) this.closeOverlay(); };
+    this.overlay.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => this.closeOverlay()));
   }
 
   showOver(m: OverMsg, name: string): void {
     this.over.classList.remove('hidden');
-    this.over.innerHTML = `
-      <h1 class="logo">GAME OVER</h1>
-      <div class="panel"><h3>This page cannot be displayed</h3><div class="body" style="text-align:center">
-        <div style="font-size:42px;font-family:var(--head)">Floor ${m.floor}</div>
-        <div>${m.totalBits} bits earned</div>
-        <div class="smallnote">Seed <b>${esc(m.seed)}</b> · enter it on the menu to replay this world</div>
-        <div class="row" style="justify-content:center;margin-top:12px"><button class="big" id="o-again">Back to menu</button></div>
-        <div class="smallnote">${esc(name)}, nobody dies on the internet. They just stop loading.</div>
-      </div></div>`;
+    this.over.innerHTML = `<div class="desk" style="justify-content:center">${win('Webmaze', `
+      <div class="msg"><span class="ico-err"></span><div>
+        <div style="font-weight:bold;margin-bottom:6px">This page cannot be displayed.</div>
+        <div>Your team got lost on <b>floor ${m.floor}</b> with <b>${m.totalBits} bits</b> earned.</div>
+        <div class="note" style="margin-top:6px">Seed <b>${esc(m.seed)}</b>: enter it on the menu to replay this world.</div>
+        <div class="note" style="margin-top:6px">${esc(name)}, nobody dies on the internet. They just stop loading.</div>
+      </div></div>
+      <div class="row mid" style="margin-top:10px"><button class="default" id="o-again">OK</button></div>`, { cls: 'over' })}</div>`;
+    this.showTaskbar('Webmaze - Game over');
     this.over.querySelector('#o-again')?.addEventListener('click', () => this.h.again());
   }
 
   openChat(onSend: (t: string) => void): void {
     if (this.chatEl) return;
     const i = document.createElement('input');
-    i.type = 'text'; i.maxLength = 80; i.placeholder = 'say something…'; i.style.cssText = 'position:absolute;left:50%;bottom:90px;transform:translateX(-50%);width:min(80vw,420px);z-index:30';
-    this.root.appendChild(i);
+    i.type = 'text'; i.maxLength = 80; i.placeholder = 'say something…';
+    const box = document.createElement('div');
+    box.innerHTML = win('Chat', '', { cls: 'chat' });
+    const w = box.firstElementChild as HTMLElement;
+    w.querySelector('.wb')!.appendChild(i);
+    this.root.appendChild(w);
     this.chatEl = i;
     i.focus();
     i.onkeydown = (e) => {
@@ -380,7 +477,7 @@ export class UI {
   }
 
   closeChat(): void {
-    this.chatEl?.remove();
+    this.chatEl?.closest('.chat')?.remove();
     this.chatEl = null;
   }
 

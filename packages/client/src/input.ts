@@ -17,22 +17,28 @@ export class Input {
   private touchRoot: HTMLElement | null = null;
   private knob: HTMLElement | null = null;
   private crouchToggle = false;
-  private ignoreLookUntil = 0;
+  /** whether the current pointer lock delivers raw, unaccelerated mouse counts */
+  private rawActive = false;
+  /** running average of recent per-event motion, used to spot bogus jumps on non-raw locks */
+  private typical = 0;
+  private skipNext = false;
+  /** last applied event, to recognise the browser echoing its own cursor warp back as fake motion */
+  private prev = { dx: 0, dy: 0, t: 0 };
+  /** request raw (unaccelerated) mouse input on the next lock; saved */
+  rawInput = (() => { try { return localStorage.getItem('webmaze.raw') !== '0'; } catch { return true; } })();
 
   constructor(private canvas: HTMLCanvasElement, private overlayRoot: HTMLElement) {
     this.touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
     addEventListener('keydown', (e) => this.onKey(e, true));
     addEventListener('keyup', (e) => this.onKey(e, false));
-    addEventListener('blur', () => { this.keys.clear(); this.interactHeld = false; this.talkHeld = false; });
-    addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement !== this.canvas || !this.enabled) return;
-      if (performance.now() < this.ignoreLookUntil) return;
-      let dx = e.movementX, dy = e.movementY;
-      // browsers sometimes report one huge bogus delta (lock/unlock, focus changes): drop it
-      if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.abs(dx) > 300 || Math.abs(dy) > 300) return;
-      this.lookDX += dx; this.lookDY += dy;
+    addEventListener('blur', () => { this.keys.clear(); this.lookDX = 0; this.lookDY = 0; this.interactHeld = false; this.talkHeld = false; });
+    addEventListener('mousemove', (e) => this.onMouseMove(e));
+    document.addEventListener('pointerlockchange', () => {
+      this.lookDX = 0; this.lookDY = 0; this.typical = 0; this.prev.t = 0;
+      // the first event after (un)locking can carry the jump from the old cursor position to the lock point
+      this.skipNext = true;
+      if (document.pointerLockElement !== this.canvas) this.rawActive = false;
     });
-    document.addEventListener('pointerlockchange', () => { this.lookDX = 0; this.lookDY = 0; this.ignoreLookUntil = performance.now() + 150; });
     canvas.addEventListener('mousedown', () => {
       if (this.enabled && !this.touch && document.pointerLockElement !== canvas) this.lockPointer();
     });
@@ -43,16 +49,62 @@ export class Input {
     return this.touch || document.pointerLockElement === this.canvas;
   }
 
+  setRawInput(on: boolean): void {
+    this.rawInput = on;
+    try { localStorage.setItem('webmaze.raw', on ? '1' : '0'); } catch { /* ignore */ }
+  }
+
   /**
-   * Plain pointer lock, on purpose. Asking for `unadjustedMovement` makes the browser report raw sensor counts,
-   * which bypasses the OS pointer-speed setting: turn speed then scales directly with mouse DPI and a
-   * high-DPI mouse spins the camera many times faster than the same hand movement moves the desktop cursor.
+   * Every movement event is applied exactly as reported: no per-frame clamp, no smoothing. Clamping or dropping
+   * ordinary motion loses more in one direction than the other, which makes the view drift away from where the
+   * hand put it.
+   *
+   * Plain (non-raw) pointer lock is emulated by the browser with a hidden OS cursor that it keeps warping back to
+   * the middle of the window. On some systems (notably Chromium on Linux, where raw input is not available, and
+   * under XWayland, VMs and remote desktops) that warp leaks through as an extra event that exactly undoes the
+   * previous one, or as one huge jump. Those make the view twitch and wander on its own, so on non-raw locks we
+   * drop an event that is the exact mirror of the one before it, and isolated spikes far above recent motion.
+   * Raw locks never do this and are passed through untouched.
+   */
+  private onMouseMove(e: MouseEvent): void {
+    if (document.pointerLockElement !== this.canvas || !this.enabled) return;
+    const dx = e.movementX, dy = e.movementY;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    if (this.skipNext) { this.skipNext = false; if (Math.abs(dx) + Math.abs(dy) > 40) return; }
+    const m = Math.max(Math.abs(dx), Math.abs(dy));
+    const now = e.timeStamp || performance.now();
+    if (!this.rawActive) {
+      const p = this.prev;
+      const mirror = now - p.t < 6 && Math.abs(p.dx) + Math.abs(p.dy) >= 4 && Math.abs(dx + p.dx) <= 1 && Math.abs(dy + p.dy) <= 1;
+      if (mirror) { p.t = 0; return; } // warp echo: the previous event was the real one
+      if (m > 150 && m > this.typical * 10 + 60) return; // isolated spike, not a real flick
+    }
+    this.typical += (m - this.typical) * 0.25;
+    this.prev.dx = dx; this.prev.dy = dy; this.prev.t = now;
+    this.lookDX += dx; this.lookDY += dy;
+  }
+
+  /**
+   * Prefer raw input (`unadjustedMovement`): it bypasses OS pointer acceleration, so the same hand movement always
+   * turns the view by the same amount, and it avoids the cursor-recentring glitches of plain pointer lock.
+   * Falls back to plain lock where raw input is not supported.
    */
   private lockPointer(): void {
+    const c = this.canvas as HTMLCanvasElement & { requestPointerLock(o?: { unadjustedMovement?: boolean }): Promise<void> | void };
+    const plain = (): void => {
+      this.rawActive = false;
+      try {
+        const r = c.requestPointerLock();
+        if (r && typeof r.catch === 'function') r.catch(() => { /* refused (no gesture, or re-lock too soon) */ });
+      } catch { /* ignore */ }
+    };
+    if (!this.rawInput) { plain(); return; }
     try {
-      const r = this.canvas.requestPointerLock() as Promise<void> | void;
-      if (r && typeof r.catch === 'function') r.catch(() => { /* lock refused (no gesture, or re-lock too soon) */ });
-    } catch { /* ignore */ }
+      const r = c.requestPointerLock({ unadjustedMovement: true });
+      if (r && typeof r.then === 'function') {
+        r.then(() => { this.rawActive = true; }, (err: unknown) => { if ((err as { name?: string })?.name === 'NotSupportedError') plain(); });
+      } else this.rawActive = false; // browser ignored the option: treat as a plain lock
+    } catch { plain(); }
   }
 
   releasePointer(): void {
@@ -101,9 +153,7 @@ export class Input {
   }
 
   takeLook(): [number, number] {
-    // cap per-frame turn so a stalled frame or a spike can never fling the camera
-    const cap = 150;
-    const r: [number, number] = [Math.max(-cap, Math.min(cap, this.lookDX)), Math.max(-cap, Math.min(cap, this.lookDY))];
+    const r: [number, number] = [this.lookDX, this.lookDY];
     this.lookDX = 0; this.lookDY = 0;
     return r;
   }
